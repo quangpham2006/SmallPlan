@@ -411,15 +411,15 @@ class LLMEnv(HighLevelEnv):
                                                                                 vor_graph=obs["separated_voronoi_graph"],)
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
-            # self.llm.SFT_query(conversation)
+            # self.llm.train_SFT(conversation)
             self.llm.train_PPO(reward=reward)
-            self.llm.SFT_query(conversation)
+            self.llm.train_SFT(conversation)
         except:
             subpolicy_success = False
             done = False
-            # self.llm.SFT_query(conversation)
+            # self.llm.train_SFT(conversation)
             self.llm.train_PPO(reward=-0.1)
-            self.llm.SFT_query(conversation)
+            self.llm.train_SFT(conversation)
             # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
             
         conversation.add_message(self.last_env_feedback)
@@ -446,9 +446,9 @@ class LLMEnv(HighLevelEnv):
                                                                                     graph=graph,
                                                                                     vor_graph=obs["separated_voronoi_graph"])
             except:
-                # self.llm.SFT_query(conversation)
+                # self.llm.train_SFT(conversation)
                 self.llm.train_PPO(reward=-0.1)
-                self.llm.SFT_query(conversation)
+                self.llm.train_SFT(conversation)
                 # conversation.add_message({"role": "user", "content": "The action cannot be executed. Might be some logical errors or format errors."})
                 # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
                 # conversation.add_message({})
@@ -458,9 +458,9 @@ class LLMEnv(HighLevelEnv):
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
 
-            # self.llm.SFT_query(conversation)
+            # self.llm.train_SFT(conversation)
             self.llm.train_PPO(reward=reward)
-            self.llm.SFT_query(conversation)
+            self.llm.train_SFT(conversation)
             self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             num_retries += 1
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):

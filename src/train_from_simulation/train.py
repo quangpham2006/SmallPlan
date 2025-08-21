@@ -239,17 +239,17 @@ def train_scene(config_file: str,
 def setup_cfgs():
     # NOTE: igibson will reload the config file, so changes here won't be relfected! 
     # Just for wandb logging
-    cfg = parse_config("./configs/moma_llm.yaml")
+    config_file = "./configs/moma_llm.yaml"
+    cfg = parse_config(config_file)
     wandb_cfg = parse_config("./configs/wandb.yaml")
     slm_training_cfg = parse_config("./configs/slm_training.yaml")
 
-    return cfg, wandb_cfg, slm_training_cfg
+    return config_file, cfg, wandb_cfg, slm_training_cfg
 
 def main():
     np.set_printoptions(precision=3, suppress=True)
        
-    cfg, wandb_cfg, slm_training_cfg = setup_cfgs()
-    print(slm_training_cfg)
+    config_file, cfg, wandb_cfg, slm_training_cfg = setup_cfgs()
     save_dir = f"{slm_training_cfg['smallplan_outputs_path']}/{slm_training_cfg['slm_api_model']}"
     slm_api_url = f"http://{slm_training_cfg['slm_api_host']}:{slm_training_cfg['slm_api_port']}"
 

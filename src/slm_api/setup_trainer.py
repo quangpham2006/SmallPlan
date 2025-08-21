@@ -89,9 +89,9 @@ class SLMTrainer:
                 labels=labels
             )
             loss = outputs.loss
-            self.sft_optimizer.zero_grad()
+            self.sft_trainer.zero_grad()
             loss.backward()
-            self.sft_optimizer.step()
+            self.sft_trainer.step()
             # sft_loss = loss.item()
             results_message = "SFT updated"
         

@@ -129,9 +129,9 @@ class LLM_hugging:
         url = f"{self.slm_api_url}/train"
         conversation_api = Conversation_api(conversation.messages[: -1])
         data = {"messages": conversation_api.messages, "target_response": content}
-        response = requests.post(url, json=data)
-        print(response.status_code)
-        print(response.json())
+        train_response = requests.post(url, json=data)
+        print(train_response.status_code)
+        print(train_response.json())
 
     def save_checkpoint(self, save_name): 
         url = f"{self.slm_api_url}/save_model"
