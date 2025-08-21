@@ -1,19 +1,22 @@
-Toyota Motor Europe NV/SA and its affiliates retain all intellectual property and proprietary rights in and to this software, related documentation and any modifications thereto. Any use, reproduction, disclosure or distribution of this software and related documentation without an express license agreement from Toyota Motor Europe NV/SA is strictly prohibited.
+# SmallPlan: Leverage Small Language Models for Sequential Path Planning with Simulation-Powered, LLM-Guided Distillation
 
-# ThinkPlan: Towards Multimodal for Low-resource Long-Horizontal Semantic Path-planning in Robotics
-
-
-
+Updating...
 
 <p align="center">
   <!-- <img src="assets/teaser.png" alt="Overview of Batch3DMOT architecture" width="245" /> -->
   <img src="assets/image.png" alt="Overview of ThinkPlan" width="1200" />
 </p>
 
+## Code overview
 
-We adapt the code from [**arXiv**](https://arxiv.org/abs/2403.08605) 
+SmallPlan adopts the open-sourced code from MoMaLLM [[**paper**](https://arxiv.org/abs/2403.08605)] and TextGames [[**paper**](https://arxiv.org/abs/2502.18431)]
 
-The weight of the fine-tunned model can be found [**here**](https://mbzuaiac-my.sharepoint.com/:f:/g/personal/cuong_pham_mbzuai_ac_ae/EuZoi_N-OvtEsRHnlMObw0UB0WmpykeMQTjKOxMcMKbFjw?e=1blu1h)
+* We use MoMaLLM code base for simulation and LLM agent set-up. We then add functions for fine-tuning the SLMs with SFT and RL. The training and reward functions are provided in ```./moma_llm/env/llm_env.py```
+
+* We use TextGames for Out-of-domain Analysis experiment. In their code base, we mostly run ```./textgames/agents/dsr1_distill.py``` to test our fine-tuned SLMs. 
+
+The weight of the fine-tunned SLMs can be found [**here**](https://mbzuaiac-my.sharepoint.com/:f:/g/personal/cuong_pham_mbzuai_ac_ae/EuZoi_N-OvtEsRHnlMObw0UB0WmpykeMQTjKOxMcMKbFjw?e=1blu1h)
+
 ## Docker
 For simple use, we provide a Dockerfile and Vscode devcontainer configuration. 
 
@@ -36,9 +39,25 @@ To use without docker, instead
 2. Update the conda environment for igibson with the dependencies with `pip3 install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113`
 3. Follow the data-download steps from the Docker section above
 
-## Running the approach
+<!-- ## Running the approach
 Running the GPT_4 using python3 main.py 
 
 Running the Local LLM: python3 test.py 
 
-Running the training: python3 train.py
+Running the training: python3 train.py -->
+
+## Citation
+
+Please cite our work if you find helpful.
+
+```
+@misc{pham2025smallplanleveragesmalllanguage,
+      title={SmallPlan: Leverage Small Language Models for Sequential Path Planning with Simulation-Powered, LLM-Guided Distillation}, 
+      author={Quang P. M. Pham and Khoi T. N. Nguyen and Nhi H. Doan and Cuong A. Pham and Kentaro Inui and Dezhen Song},
+      year={2025},
+      eprint={2505.00831},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2505.00831}, 
+}
+```
