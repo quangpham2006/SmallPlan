@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  slm_api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "7777:7777"
+    volumes:
+      - ../src:/app/src
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
