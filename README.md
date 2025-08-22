@@ -36,7 +36,7 @@ For ```igibson``` environment (Python 3.8), ```pip install -r requirements.txt``
 
 Please run ```cp .env.example .env``` in the terminal and add your ```WANDB_API_KEY, OPENAI_ORGANIZATION, OPENAI_API_KEY```
 
-### Training
+## Training
 
 First, please go to ```./configs/slm_training.yaml``` and ```./configs/wandb.yaml``` and chaneg your config.
 
