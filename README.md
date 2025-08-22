@@ -11,9 +11,9 @@ Updating...
 
 SmallPlan adopts the open-sourced code from MoMaLLM [[**paper**](https://arxiv.org/abs/2403.08605)] and TextGames [[**paper**](https://arxiv.org/abs/2502.18431)]
 
-* We use MoMaLLM code base for simulation and LLM agent set-up. We then add functions for fine-tuning the SLMs with SFT and RL. The training and reward functions are provided in ```./src/train_from_simulation/packages/moma_llm/env/llm_env.py```
+* We use MoMaLLM code base for simulation and LLM agent set-up. We then add functions for fine-tuning the SLMs with SFT and RL.
 
-* We use TextGames for Out-of-domain Analysis experiment. In their code base, we mostly run ```./textgames/agents/dsr1_distill.py``` to test our fine-tuned SLMs. 
+* We use TextGames for out-of-domain analysis experiment. We mostly run ```./textgames/agents/dsr1_distill.py``` to test our fine-tuned SLMs. 
 
 The weight of the fine-tunned SLMs can be found [**here**](https://mbzuaiac-my.sharepoint.com/:f:/g/personal/cuong_pham_mbzuai_ac_ae/EuZoi_N-OvtEsRHnlMObw0UB0WmpykeMQTjKOxMcMKbFjw?e=1blu1h)
 
