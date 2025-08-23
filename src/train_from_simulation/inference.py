@@ -9,7 +9,7 @@ from sklearn.metrics import auc
 import wandb
 
 from src.train_from_simulation.packages.moma_llm.tasks.patched_scene import MonkeyPatchedInteractiveIndoorScene
-from src.train_from_simulation.packages.moma_llm.llm.llm import LLM, LLM_hugging
+from src.train_from_simulation.packages.moma_llm.llm.llm import LLM_hugging
 from src.train_from_simulation.packages.moma_llm.env import (GreedyBaseline, 
                                    RandomBaseline, 
                                    OurIGibsonEnv, 
@@ -257,9 +257,16 @@ def log_token_metrics(episode_infos):
     print("===================================")
     
     
-def evaluate_scene(config_file: str, cfg, scene_id: str, tot_ep: int) -> list:
+def evaluate_scene(config_file: str, cfg, scene_id: str, tot_ep: int, slm_api_url: str) -> list:
     episode_infos = []
-    high_level_env = create_env(cfg, agent=cfg["agent"], config_file=config_file, scene_id=scene_id, control_freq=cfg["control_freq"], cheap=cfg["cheap"], seed=cfg["seed"])
+    high_level_env = create_env(cfg, 
+                                agent=cfg["agent"], 
+                                config_file=config_file, 
+                                scene_id=scene_id, 
+                                control_freq=cfg["control_freq"], 
+                                cheap=cfg["cheap"], 
+                                seed=cfg["seed"],
+                                slm_api_url=slm_api_url)
     for i in range(cfg["num_episodes_per_scene"]):
         done = False
         obs = high_level_env.reset(config_file=config_file, scene_id=scene_id, episode_num=i)
@@ -268,7 +275,7 @@ def evaluate_scene(config_file: str, cfg, scene_id: str, tot_ep: int) -> list:
         print("########################################")
         while not done:
             high_level_env.visualize(obs)
-            done, task_success, episode_info = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description)
+            done, task_success, episode_info = high_level_env.take_action_inference(obs=obs, task_description=high_level_env.unwrapped.task.task_description)
             # env adds last action to the figure title, that's why we log it after the env step
             wandb.log({"bev_maps": high_level_env.unwrapped.f})
             obs = high_level_env.get_state(compute_scene_graph=True)
@@ -337,7 +344,7 @@ def main():
         raise ValueError(f"Unknown datasplit {cfg['datasplit']}")
 
     cfg.update({"scene_ids": scene_ids, "agent": cfg["agent"]})
-    wandb.init(project=wandb_cfg["project"], 
+    wandb.init(project=wandb_cfg["project_inference"], 
                entity=wandb_cfg["entity"], 
                config=cfg,
                mode=wandb_cfg["mode"] if cfg["wandb"] else "disabled",
@@ -358,7 +365,6 @@ def main():
                                     cfg=cfg, 
                                     scene_id=scene_id, 
                                     tot_ep=tot_ep,
-                                    save_dir=save_dir,
                                     slm_api_url=slm_api_url)
 
         episode_infos[scene_id] = infos

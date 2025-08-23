@@ -561,7 +561,7 @@ class LLMEnv(HighLevelEnv):
 
         robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
 
-        subpolicy_success, done, self.last_env_feedback = self.execute_action(action=action,
+        subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
                                                                               argument=argument,
                                                                               task_desc=task_description,
                                                                               graph=graph,
