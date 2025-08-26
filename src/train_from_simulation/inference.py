@@ -348,6 +348,7 @@ def main():
                entity=wandb_cfg["entity"], 
                config=cfg,
                mode=wandb_cfg["mode"] if cfg["wandb"] else "disabled",
+               name=slm_training_cfg['slm_api_model'],
                )
 
     # copy config file to wandb run dir, so modifications to the main config file won't affect current runs
