@@ -6,7 +6,7 @@
 import re
 from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Literal
 
 import networkx as nx
 import numpy as np
@@ -328,8 +328,20 @@ class LLMEnv(HighLevelEnv):
         # reward_step = 
         print("---------------Reward------------------: ", reward_subtask + reward_explore + reward_distance)
         return reward_subtask + reward_explore + reward_distance
+
+    def _train_by_strategy(self, reward, conversation, strategy: Literal["RL-SFT", "SFT", "SFT-RL"]):
+        if strategy == "RL-SFT":
+            self.llm.train_PPO(reward=reward)
+            self.llm.train_SFT(conversation)
+        elif strategy == "SFT":
+            self.llm.train_SFT(conversation)
+        elif strategy == "SFT-RL":
+            self.llm.train_SFT(conversation)
+            self.llm.train_PPO(reward=reward)
+        else:
+            raise ValueError(f"Unknown training strategy {strategy}")
     
-    def take_action(self, obs: dict, task_description: str):
+    def take_action(self, obs: dict, task_description: str, strategy: Literal["RL-SFT", "SFT", "SFT-RL"]):
         def _apply_room_classification(obs):
             obs["room_object_graph"] = nx.relabel_nodes(obs["room_object_graph"], self.room_classification)
             for n, d in obs["separated_voronoi_graph"].nodes(data=True):
@@ -411,15 +423,11 @@ class LLMEnv(HighLevelEnv):
                                                                                 vor_graph=obs["separated_voronoi_graph"],)
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
-            # self.llm.train_SFT(conversation)
-            self.llm.train_PPO(reward=reward)
-            self.llm.train_SFT(conversation)
+            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
         except:
             subpolicy_success = False
             done = False
-            # self.llm.train_SFT(conversation)
-            self.llm.train_PPO(reward=-0.1)
-            self.llm.train_SFT(conversation)
+            self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
             # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
             
         conversation.add_message(self.last_env_feedback)
@@ -436,8 +444,8 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
-            retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
-            conversation.add_message({"role": "user", "content": retrial_prompt})
+            # retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
+            # conversation.add_message({"role": "user", "content": retrial_prompt})
             response, action, argument = self.send_query(conversation=conversation)
             try:
                 subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
@@ -446,9 +454,7 @@ class LLMEnv(HighLevelEnv):
                                                                                     graph=graph,
                                                                                     vor_graph=obs["separated_voronoi_graph"])
             except:
-                # self.llm.train_SFT(conversation)
-                self.llm.train_PPO(reward=-0.1)
-                self.llm.train_SFT(conversation)
+                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
                 # conversation.add_message({"role": "user", "content": "The action cannot be executed. Might be some logical errors or format errors."})
                 # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
                 # conversation.add_message({})
@@ -458,9 +464,135 @@ class LLMEnv(HighLevelEnv):
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
 
-            # self.llm.train_SFT(conversation)
-            self.llm.train_PPO(reward=reward)
-            self.llm.train_SFT(conversation)
+            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
+            self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
+            num_retries += 1
+        if (num_retries == max_retries) and (not subpolicy_success) and (not done):
+            done = True
+            self.episode_info["failure_reason"] = "max retrials reached"
+        self.episode_info["total_num_retrials"] += num_retries
+        self.episode_info["steps_with_retrial"] += (num_retries > 0)
+
+        if done:
+            task_success = self.evaluate_success()
+        else:
+            task_success = False
+
+        if sum([response == r for r in self.prev_responses]) >= 3:
+            print("WARNING: LLM response is the same as in the previous steps. Probably stuck.")
+            if not self.episode_info.get("failure_reason", None):
+                self.episode_info["failure_reason"] = "llm stuck"
+                self.episode_info["task_success"] = False
+            done = True
+        if len(self.prev_responses) > 6:
+            del self.prev_responses[0]
+        self.prev_responses.append(response)
+
+        return done, task_success, self.episode_info
+
+    def take_action_inference(self, obs: dict, task_description: str):
+        def _apply_room_classification(obs):
+            obs["room_object_graph"] = nx.relabel_nodes(obs["room_object_graph"], self.room_classification)
+            for n, d in obs["separated_voronoi_graph"].nodes(data=True):
+                d["room_id"] = self.room_classification[NODETYPE.roomname(d["room_id"])]
+        self.classify_rooms(obs)
+        _apply_room_classification(obs)
+        
+        graph = obs["room_object_graph"]
+        labelled_rooms = list(graph.successors("root"))
+
+        room_dict = self.llm.create_room_object_dict(graph,
+                                                     open_door_inclusion="ignore",
+                                                     room_classification=self.room_classification)
+        current_room = self.room_classification[obs["robot_current_room"]]
+
+        def _get_closest_dist(points):
+            closest_idx, _closest_frontier, _costs, paths = self._find_closest_point(points)
+            return self.env.slam.voxel_size * len(paths[closest_idx])
+
+        rooms_with_frontier_within = []
+        rooms_with_frontier_leading_out = []
+        rooms_with_closed_doors = []
+        for n in labelled_rooms:
+            frontier_points = graph.nodes.get(n)["frontier_points"]
+            if len(frontier_points):
+                frontier_points = graph.nodes[n].get("frontier_points", {})
+                frontier_points_within, frontier_points_leading_out = split_frontier_points(frontier_points)
+                if frontier_points_within:
+                    rooms_with_frontier_within.append((n, _get_closest_dist(frontier_points_within)))
+                if frontier_points_leading_out:
+                    rooms_with_frontier_leading_out.append((n, _get_closest_dist(frontier_points_leading_out)))
+            closed_doors = graph.nodes.get(n)["closed_doors"]
+            if len(closed_doors):
+                rooms_with_closed_doors.append((n, _get_closest_dist([graph.nodes.get(n) for n in closed_doors])))
+        rooms_with_frontier_within = sorted(rooms_with_frontier_within, key=lambda x: x[1])
+        rooms_with_frontier_leading_out = sorted(rooms_with_frontier_leading_out, key=lambda x: x[1])
+        rooms_with_closed_doors = sorted(rooms_with_closed_doors, key=lambda x: x[1])
+
+        close_objects = self._get_close_objects(graph=graph, current_room=current_room, closeness_thresh=2.5)
+        nlp_history = self._match_action_history(graph=graph, separated_voronoi_graph=obs["separated_voronoi_graph"])
+        
+        def _calc_dist_to_room(current_room, separated_voronoi_graph) -> dict:
+            # find distance from robot to closest voronoi node with that room label
+            vnodes = defaultdict(list)
+            for node_pos, node_data in separated_voronoi_graph.nodes(data=True):
+                vnodes[node_data["room_id"]].append(node_pos)
+            
+            room_distances = {}
+            for room in self.room_classification.values():
+                if room == current_room:
+                    room_distances[room] = "current location"
+                else:
+                    _idx, _closest_node, _costs, paths = self._find_closest_point([self.env.slam.voxel2world(pos) for pos in vnodes[room]])
+                    dist = self.env.slam.voxel_size * len(paths)
+                    room_distances[room] = distance_mapping(dist)
+            return room_distances
+        room_distances = _calc_dist_to_room(current_room, obs["separated_voronoi_graph"])
+
+        conversation = self._create_prompt(task_description=task_description,
+                                           labelled_rooms=labelled_rooms,
+                                           current_room=current_room,
+                                           room_dict=room_dict,
+                                           rooms_with_frontier_within=rooms_with_frontier_within,
+                                           rooms_with_frontier_leading_out=rooms_with_frontier_leading_out,
+                                           rooms_with_closed_doors=rooms_with_closed_doors,
+                                           close_objects=close_objects,
+                                           nlp_history=nlp_history,
+                                           graph=graph,
+                                           room_graph=obs["room_graph"],
+                                           room_distances=room_distances)
+        response, action, argument = self.send_query(conversation=conversation)
+
+        robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
+
+        subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
+                                                                              argument=argument,
+                                                                              task_desc=task_description,
+                                                                              graph=graph,
+                                                                              vor_graph=obs["separated_voronoi_graph"],)
+            
+        conversation.add_message(self.last_env_feedback)
+        self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
+        
+        robot_pose_post = np.concatenate((self.env.robots[0].get_position_orientation()))
+
+        num_retries, max_retries = 0, 5
+        # only re-try if robot pose didn't change. Otherwise do a normal next high-level step with the new observation
+        while (not subpolicy_success) and np.all((robot_pose_post - robot_pose_pre) < 0.1) and (not done) and (num_retries < max_retries):
+            # recompute obs so that num_high_level_steps counter is correctly increased
+            obs = self.env.get_state(compute_scene_graph=True)
+            try:
+                _apply_room_classification(obs)
+            except:
+                break
+            response, action, argument = self.send_query(conversation=conversation)
+
+            subpolicy_success, done, self.last_env_feedback = self.execute_action(action=action,
+                                                                                  argument=argument,
+                                                                                  task_desc=task_description,
+                                                                                  graph=graph,
+                                                                                  vor_graph=obs["separated_voronoi_graph"])
+            conversation.add_message(self.last_env_feedback)
             self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             num_retries += 1
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):

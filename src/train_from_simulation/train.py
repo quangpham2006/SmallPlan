@@ -2,6 +2,7 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 from pprint import pprint
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -183,7 +184,8 @@ def train_scene(config_file: str,
                 scene_id: str, 
                 tot_ep: int, 
                 save_dir: str,
-                slm_api_url: str) -> list:
+                slm_api_url: str,
+                strategy: Literal["RL-SFT", "SFT", "SFT-RL"]) -> list:
     episode_infos = []
     high_level_env = create_env(cfg, 
                                 agent=cfg["agent"], 
@@ -201,7 +203,7 @@ def train_scene(config_file: str,
         print("########################################")
         while not done:
             high_level_env.visualize(obs)
-            done, task_success, episode_info = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description)
+            done, task_success, episode_info = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description, strategy=strategy)
             # env adds last action to the figure title, that's why we log it after the env step
             wandb.log({"bev_maps": high_level_env.unwrapped.f})
             obs = high_level_env.get_state(compute_scene_graph=True)
@@ -250,7 +252,7 @@ def main():
     np.set_printoptions(precision=3, suppress=True)
        
     config_file, cfg, wandb_cfg, slm_training_cfg = setup_cfgs()
-    save_dir = f"{slm_training_cfg['smallplan_outputs_path']}/{slm_training_cfg['slm_api_model']}"
+    save_dir = f"{slm_training_cfg['smallplan_outputs_path']}/{slm_training_cfg['strategy']}-2e-{slm_training_cfg['slm_api_model']}"
     slm_api_url = f"http://{slm_training_cfg['slm_api_host']}:{slm_training_cfg['slm_api_port']}"
 
     if cfg["seed"] > 0:
@@ -287,7 +289,8 @@ def main():
                                     scene_id=scene_id, 
                                     tot_ep=tot_ep,
                                     save_dir=save_dir,
-                                    slm_api_url=slm_api_url)
+                                    slm_api_url=slm_api_url,
+                                    strategy=slm_training_cfg["strategy"])
 
         episode_infos[scene_id] = infos
     log_summary_table(episode_infos=episode_infos)

@@ -1,0 +1,380 @@
+import shutil
+from collections import defaultdict
+from pathlib import Path
+from pprint import pprint
+
+import numpy as np
+import pandas as pd
+from sklearn.metrics import auc
+import wandb
+
+from src.train_from_simulation.packages.moma_llm.tasks.patched_scene import MonkeyPatchedInteractiveIndoorScene
+from src.train_from_simulation.packages.moma_llm.llm.llm import LLM_hugging
+from src.train_from_simulation.packages.moma_llm.env import (GreedyBaseline, 
+                                   RandomBaseline, 
+                                   OurIGibsonEnv, 
+                                   create_igibson_env, 
+                                   JsonLLMEnv, 
+                                   LLMEnv)
+
+from src.train_from_simulation.packages.moma_llm.utils import (TEST_SCENES,
+                                     TRAINING_SCENES,
+                                     get_config)
+
+from igibson.utils.utils import parse_config
+from igibson.scenes import igibson_indoor_scene
+
+import logging
+from dotenv import load_dotenv
+
+load_dotenv()
+logging.basicConfig(level = logging.INFO)
+logger = logging.getLogger(__name__)
+
+igibson_indoor_scene.InteractiveIndoorScene._add_object = MonkeyPatchedInteractiveIndoorScene._add_object
+igibson_indoor_scene.InteractiveIndoorScene._orig_add_object = MonkeyPatchedInteractiveIndoorScene._orig_add_object
+
+def create_env(cfg, 
+               agent: str, 
+               config_file: str, 
+               scene_id: str, 
+               control_freq: float, 
+               cheap: bool, 
+               seed: int,
+               slm_api_url: str) -> LLMEnv:
+    if agent == "moma_llm":
+        env_fn = LLMEnv
+    elif agent == "json_llm":
+        env_fn = JsonLLMEnv
+    elif agent == "greedy":
+        env_fn = GreedyBaseline
+    elif agent == "random":
+        env_fn = RandomBaseline
+    else:
+        raise ValueError(f"Unknown agent {agent}")
+
+    llm = LLM_hugging(debug=True, 
+                      room_classification_model="gpt-4o", 
+                      open_set_rooms=cfg["open_set_room_categories"],
+                      slm_api_url=slm_api_url)
+
+    low_level_env = create_igibson_env(config_file=config_file, 
+                                       control_freq=control_freq, 
+                                       scene_id=scene_id,
+                                       seed=seed)
+    high_level_env = env_fn(env=low_level_env, llm=llm, seed=seed)  
+    return high_level_env
+
+def calc_area_under_curve(x, y, max_x):
+    if max(x) > max_x:
+        idx = (x <= max_x)
+        x = x[idx]
+        y = y[idx]
+    if max(x) < max_x:
+        x = np.concatenate([x, [max_x]])
+        y = np.concatenate([y, [y[-1]]])
+    
+    x = np.concatenate([[0], x])
+    y = np.concatenate([[0], y])
+    return auc(x, y) / max_x
+    
+
+def plot_efficiency_curves(episode_infos, max_hl_steps: int):
+    ll_steps = []
+    ll_steps_gtDone = []
+    hl_steps = []
+    task_success = []
+    task_success_gtDone = []
+    for scene_id in sorted(episode_infos.keys()):
+        for e in episode_infos[scene_id]:
+            ll_steps.append(e["num_low_level_steps_with_open_cost"])
+            ll_steps_gtDone.append(e["num_low_level_steps_with_open_cost_gtDone"])
+            hl_steps.append(e["num_high_level_steps"])
+            task_success.append(e["task_success"])
+            task_success_gtDone.append(e["task_success_gtDone"])
+    task_success = np.array(task_success)
+    task_success_gtDone = np.array(task_success_gtDone)
+    ll_steps = np.array(ll_steps)
+    hl_steps = np.array(hl_steps)
+    
+    def _plot(steps, task_success):
+        df = pd.DataFrame({"steps": steps, "task_success": task_success})
+        df = df.sort_values("steps")
+        
+        values = [np.logical_and(df["task_success"].values, df["steps"].values <= max_steps).mean() for max_steps in df["steps"]]
+        df2 = pd.DataFrame({"steps": df["steps"].values, "success": values})
+        return wandb.Table(dataframe=df2)
+    
+    def _get_auc(steps, task_success, max_x: int, title: str):
+        table = _plot(steps=steps, task_success=task_success)
+        auc = calc_area_under_curve(table.get_dataframe()["steps"].values, table.get_dataframe()["success"].values, max_x=max_x)
+        wandb_plot = wandb.plot_table("wandb/area-under-curve/v0",
+                                      table,
+                                      {"x": "steps", "y": "success"},
+                                      {"title": title,
+                                          "x-axis-title": "Steps",
+                                          "y-axis-title": "Success rate",},)
+        return auc, wandb_plot
+    
+    hl_auc, hl_plot = _get_auc(steps=hl_steps, task_success=task_success, max_x=max_hl_steps, title="High-level-step-curve")
+    wandb.log({"efficiency_curve_high_level_steps": hl_plot, "hl_auc": hl_auc})
+    
+    ll_auc_max_steps = 5000
+    ll_auc, ll_plot = _get_auc(steps=ll_steps, task_success=task_success, max_x=ll_auc_max_steps, title="Low-level-step-curve")
+    wandb.log({"efficiency_curve_low_level_steps": ll_plot, "ll_auc": ll_auc})
+        
+    ll_auc_gtDone, ll_plot_gtDone = _get_auc(steps=ll_steps_gtDone, task_success=task_success_gtDone, max_x=ll_auc_max_steps, title="Low-level-step-curve-gtDone")
+    wandb.log({"efficiency_curve_low_level_steps_gtDone": ll_plot_gtDone, "ll_auc_gtDone": ll_auc_gtDone}) 
+   
+
+def calculcate_metric_means(episode_infos):
+    columns = sorted(list(episode_infos.values())[0][0].keys())
+    scene_logs = defaultdict(dict)
+    for scene_id in sorted(episode_infos.keys()):
+        for column in columns:
+            if isinstance(episode_infos[scene_id][0].get(column, None), str):
+                continue
+            elif isinstance(episode_infos[scene_id][0].get(column, None), (np.ScalarType)):
+                d = np.nanmean([e.get(column, np.nan) for e in episode_infos[scene_id]])
+                # NOTE: if value is not defined for an episode, we take the mean over those that have the value!
+                #   e,g, [steps]_gtDone are only defined for successful episodes
+                scene_logs[scene_id][column] = d
+            else:
+                continue
+            print(column, d) 
+    return scene_logs
+
+
+def log_summary_table(episode_infos):
+    def _check_float(v):
+        try:
+            float(v)
+            return True
+        except:
+            return False
+    
+    scene_logs = calculcate_metric_means(episode_infos)
+    data = []
+    scenes = list(scene_logs.keys())
+    columns = ["scene_id"]
+    for k in scene_logs[scenes[0]].keys():
+        # only take metrics that exist for all scenes
+        if all([k in scene_logs[s] for s in scenes]):
+            columns.append(k)
+    
+    for scene_id in sorted(scenes):
+        data.append([scene_id] + [scene_logs[scene_id][c] for c in columns[1:]])
+        
+    avg_row = ["Overall avg"]
+    avg_dict = {}
+    for i, column_values in enumerate(np.array(data).T):
+        if _check_float(column_values[0]):
+            d = np.mean(column_values.astype(float))  
+            avg_dict[f"avg_{columns[i]}"] = d
+            avg_row.append(str(d))
+    data.append(avg_row)
+    avg_dict["overview_table"] = wandb.Table(columns=columns, data=np.array(data).astype(str))
+    wandb.log(avg_dict)
+
+
+def log_scene_token_metrics(scene_id: str, episode_infos: list):
+    """Log token usage metrics for a specific scene to WandB"""
+    
+    # Extract token metrics for this scene's episodes
+    input_tokens = [e.get('episode_input_tokens', 0) for e in episode_infos if 'episode_input_tokens' in e]
+    output_tokens = [e.get('episode_output_tokens', 0) for e in episode_infos if 'episode_output_tokens' in e]
+    total_tokens = [e.get('episode_total_tokens', 0) for e in episode_infos if 'episode_total_tokens' in e]
+    queries = [e.get('episode_llm_queries', 0) for e in episode_infos if 'episode_llm_queries' in e]
+    tokens_per_query = [e.get('avg_tokens_per_query', 0) for e in episode_infos if 'avg_tokens_per_query' in e]
+    
+    if not total_tokens:
+        print(f"No token metrics found for scene {scene_id}")
+        return
+    
+    # Calculate scene-specific averages and log to WandB with scene prefix
+    scene_token_summary = {
+        f'{scene_id}_avg_input_tokens_per_episode': np.mean(input_tokens) if input_tokens else 0,
+        f'{scene_id}_avg_output_tokens_per_episode': np.mean(output_tokens) if output_tokens else 0,
+        f'{scene_id}_avg_total_tokens_per_episode': np.mean(total_tokens) if total_tokens else 0,
+        f'{scene_id}_avg_llm_queries_per_episode': np.mean(queries) if queries else 0,
+        f'{scene_id}_avg_tokens_per_query': np.mean(tokens_per_query) if tokens_per_query else 0,
+        f'{scene_id}_total_input_tokens': sum(input_tokens) if input_tokens else 0,
+        f'{scene_id}_total_output_tokens': sum(output_tokens) if output_tokens else 0,
+        f'{scene_id}_total_tokens': sum(total_tokens) if total_tokens else 0,
+        f'{scene_id}_total_queries': sum(queries) if queries else 0,
+    }
+    
+    # Log to WandB
+    wandb.log(scene_token_summary)
+    
+    # Print scene-specific summary
+    print(f"=== Token Usage Summary for {scene_id} ===")
+    for key, value in scene_token_summary.items():
+        clean_key = key.replace(f'{scene_id}_', '')
+        print(f"{clean_key}: {value:.2f}" if isinstance(value, float) else f"{clean_key}: {value}")
+    print("=" * (30 + len(scene_id)))
+
+
+def log_token_metrics(episode_infos):
+    """Log overall average token usage metrics to WandB"""
+    
+    # Collect all token metrics from episodes
+    all_episodes = []
+    for scene_id in episode_infos:
+        all_episodes.extend(episode_infos[scene_id])
+    
+    # Extract token metrics
+    input_tokens = [e.get('episode_input_tokens', 0) for e in all_episodes if 'episode_input_tokens' in e]
+    output_tokens = [e.get('episode_output_tokens', 0) for e in all_episodes if 'episode_output_tokens' in e]
+    total_tokens = [e.get('episode_total_tokens', 0) for e in all_episodes if 'episode_total_tokens' in e]
+    queries = [e.get('episode_llm_queries', 0) for e in all_episodes if 'episode_llm_queries' in e]
+    tokens_per_query = [e.get('avg_tokens_per_query', 0) for e in all_episodes if 'avg_tokens_per_query' in e]
+    
+    if not total_tokens:
+        print("No token metrics found in episodes")
+        return
+    
+    # Calculate overall averages and log to WandB
+    overall_token_summary = {
+        'overall_avg_input_tokens_per_episode': np.mean(input_tokens) if input_tokens else 0,
+        'overall_avg_output_tokens_per_episode': np.mean(output_tokens) if output_tokens else 0,
+        'overall_avg_total_tokens_per_episode': np.mean(total_tokens) if total_tokens else 0,
+        'overall_avg_llm_queries_per_episode': np.mean(queries) if queries else 0,
+        'overall_avg_tokens_per_query': np.mean(tokens_per_query) if tokens_per_query else 0,
+        'overall_total_input_tokens': sum(input_tokens) if input_tokens else 0,
+        'overall_total_output_tokens': sum(output_tokens) if output_tokens else 0,
+        'overall_total_tokens': sum(total_tokens) if total_tokens else 0,
+        'overall_total_queries': sum(queries) if queries else 0,
+    }
+    
+    # Log to WandB
+    wandb.log(overall_token_summary)
+    
+    # Print overall summary
+    print("=== Overall Token Usage Summary ===")
+    for key, value in overall_token_summary.items():
+        print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
+    print("===================================")
+    
+    
+def evaluate_scene(config_file: str, cfg, scene_id: str, tot_ep: int, slm_api_url: str) -> list:
+    episode_infos = []
+    high_level_env = create_env(cfg, 
+                                agent=cfg["agent"], 
+                                config_file=config_file, 
+                                scene_id=scene_id, 
+                                control_freq=cfg["control_freq"], 
+                                cheap=cfg["cheap"], 
+                                seed=cfg["seed"],
+                                slm_api_url=slm_api_url)
+    for i in range(cfg["num_episodes_per_scene"]):
+        done = False
+        obs = high_level_env.reset(config_file=config_file, scene_id=scene_id, episode_num=i)
+        print("########################################")
+        print(f"{scene_id} - Starting episode {i + 1} in scene {scene_id}, {tot_ep + 1} overall. Task: {high_level_env.unwrapped.task.task_description}")
+        print("########################################")
+        while not done:
+            high_level_env.visualize(obs)
+            done, task_success, episode_info = high_level_env.take_action_inference(obs=obs, task_description=high_level_env.unwrapped.task.task_description)
+            # env adds last action to the figure title, that's why we log it after the env step
+            wandb.log({"bev_maps": high_level_env.unwrapped.f})
+            obs = high_level_env.get_state(compute_scene_graph=True)
+            pprint(episode_info)
+            
+        high_level_env.visualize(obs)
+        if "failure_reason" in episode_info:
+            high_level_env.env.f.suptitle(f"{high_level_env.env.f._suptitle.get_text()}, {episode_info['failure_reason']}")
+        episode_info["bev_maps"] = high_level_env.unwrapped.f
+        episode_info["num_low_level_steps_with_open_cost"] = episode_info["num_low_level_steps"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions"]
+        if episode_info.get("num_low_level_steps_gtDone", None) is not None:
+            episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_gtDone"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions_gtDone"]
+            episode_info["task_success_gtDone"] = True
+        else:
+            episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_with_open_cost"]
+            episode_info["task_success_gtDone"] = task_success
+        episode_info["episode_step"] = tot_ep
+        episode_info["spl"] = episode_info["task_success"] * (episode_info["shortest_dist"] / max(episode_info["shortest_dist"], episode_info["dist_travelled"]))
+        pprint(episode_info)
+        # episode_info["rgb"] = wandb.Video((255 * np.transpose(np.stack(high_level_env.env.rgb_frames, axis=0), (0, 3, 1, 2))).astype(np.uint8), fps=6)
+        wandb.log({k: float(v) if isinstance(v, bool) else v for k, v in episode_info.items()})
+
+        episode_infos.append(episode_info)
+        successes = [e["task_success"] for e in episode_infos]
+        tot_ep += 1
+        print(f"Task success: {task_success} (wandb_step: {wandb.run.step}). Current successes: {sum(successes)}/{len(successes)}")
+    
+    scene_logs = calculcate_metric_means({scene_id: episode_infos})
+    wandb.log({f"{scene_id}_{k}": v for k, v in scene_logs[scene_id].items()})
+    
+    # Debug: Print episode_info keys to see what's available
+    if episode_infos:
+        print(f"Episode info keys for {scene_id}: {list(episode_infos[0].keys())}")
+    
+    # Log token metrics for this specific scene
+    log_scene_token_metrics(scene_id, episode_infos)
+    
+    high_level_env.close()
+    return episode_infos, tot_ep
+    
+def setup_cfgs():
+    # NOTE: igibson will reload the config file, so changes here won't be relfected! 
+    # Just for wandb logging
+    config_file = "./configs/moma_llm_inference.yaml"
+    cfg = parse_config(config_file)
+    wandb_cfg = parse_config("./configs/wandb.yaml")
+    slm_training_cfg = parse_config("./configs/slm_training.yaml")
+
+    return config_file, cfg, wandb_cfg, slm_training_cfg
+
+def main():
+    np.set_printoptions(precision=3, suppress=True)
+       
+    config_file, cfg, wandb_cfg, slm_training_cfg = setup_cfgs()
+    save_dir = f"{slm_training_cfg['smallplan_outputs_path']}/{slm_training_cfg['slm_api_model']}"
+    slm_api_url = f"http://{slm_training_cfg['slm_api_host']}:{slm_training_cfg['slm_api_port']}"
+
+    if cfg["seed"] > 0:
+        np.random.seed(cfg["seed"])
+
+    if cfg["datasplit"] == "train":
+        scene_ids = TRAINING_SCENES
+    elif cfg["datasplit"] == "test":
+        scene_ids = TEST_SCENES
+    else:
+        raise ValueError(f"Unknown datasplit {cfg['datasplit']}")
+
+    cfg.update({"scene_ids": scene_ids, "agent": cfg["agent"]})
+    wandb.init(project=wandb_cfg["project_inference"], 
+               entity=wandb_cfg["entity"], 
+               config=cfg,
+               mode=wandb_cfg["mode"] if cfg["wandb"] else "disabled",
+               name=slm_training_cfg['slm_api_model'],
+               )
+
+    # copy config file to wandb run dir, so modifications to the main config file won't affect current runs
+    new_config_file = Path(wandb.run.dir) / Path(config_file).name
+    shutil.copy(config_file, new_config_file)
+    config_file = str(new_config_file)
+
+    episode_infos = defaultdict(list)
+
+    tot_ep = 0
+    if isinstance(scene_ids, str):
+        scene_ids = [scene_ids]
+    for scene_id in scene_ids:
+        infos, tot_ep = evaluate_scene(config_file=config_file, 
+                                    cfg=cfg, 
+                                    scene_id=scene_id, 
+                                    tot_ep=tot_ep,
+                                    slm_api_url=slm_api_url)
+
+        episode_infos[scene_id] = infos
+    log_summary_table(episode_infos=episode_infos)
+    plot_efficiency_curves(episode_infos=episode_infos, max_hl_steps=cfg["max_high_level_steps"])
+    
+    wandb.run.finish()
+
+    logger.info("Inference completed successfully.")
+
+if __name__ == "__main__":
+    main()

@@ -1,3 +1,4 @@
 entity: quangpham200602
 project: "[scene-llm-train]"
+project_inference: "[scene-llm]"
 mode: "online"

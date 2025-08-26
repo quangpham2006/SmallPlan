@@ -7,12 +7,12 @@ wandb: true
 agent: moma_llm  # moma_llm / json_llm / greedy / random
 # whether to use the distances and room-object assignments based on viewpoint & voronoi. If false, use dists purely from A* and room assignment to closest voronoi node (w/o viewpoint)
 use_viewpoint_assignment: true
-datasplit: train  # train / test
+datasplit: test  # train / test
 # resample episode if the target is detected after the initial 360-turn
 reject_onestep_episodes: false #true
 
 control_freq: 10.0
-num_episodes_per_scene: 2 #25
+num_episodes_per_scene: 1 #25
 cheap: false
 ground_truth_done_decision: false
 # as how many low-level steps to count a magic open action. Reference is 1 low-level step = 0.1m navigation

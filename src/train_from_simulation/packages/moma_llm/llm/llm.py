@@ -170,7 +170,7 @@ class LLM_hugging:
             pprint_color("\n+++++++++++++++++++++++++++++++++\n".join([f"{m['role']}: {m['content']}" for m in conversation_api.messages]),  width=200)
             pprint_color(f"==================================\n assistant: {assistant_response}",  width=200, style="rrt")
 
-        conversation.add_message({"role": "assistant", "content": assistant_response})
+        # conversation.add_message({"role": "assistant", "content": assistant_response})
         # conversation.add_message({"role": "assistant", "content": response})
         # return response
         return assistant_response
@@ -335,7 +335,7 @@ class LLM:
             pprint_color("\n+++++++++++++++++++++++++++++++++\n".join([f"{m['role']}: {m['content']}" for m in conversation.messages]), width=200)
             pprint_color(f"==================================\n {role}: {content}", width=200, style="rrt")
 
-        conversation.add_message({"role": role, "content": content})
+        # conversation.add_message({"role": role, "content": content})
 
         return content
 
