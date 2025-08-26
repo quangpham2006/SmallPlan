@@ -6,7 +6,7 @@
 import re
 from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Literal
 
 import networkx as nx
 import numpy as np
@@ -328,8 +328,20 @@ class LLMEnv(HighLevelEnv):
         # reward_step = 
         print("---------------Reward------------------: ", reward_subtask + reward_explore + reward_distance)
         return reward_subtask + reward_explore + reward_distance
+
+    def _train_by_strategy(self, reward, conversation, strategy: Literal["RL-SFT", "SFT", "SFT-RL"]):
+        if strategy == "RL-SFT":
+            self.llm.train_PPO(reward=reward)
+            self.llm.train_SFT(conversation)
+        elif strategy == "SFT":
+            self.llm.train_SFT(conversation)
+        elif strategy == "SFT-RL":
+            self.llm.train_SFT(conversation)
+            self.llm.train_PPO(reward=reward)
+        else:
+            raise ValueError(f"Unknown training strategy {strategy}")
     
-    def take_action(self, obs: dict, task_description: str):
+    def take_action(self, obs: dict, task_description: str, strategy: Literal["RL-SFT", "SFT", "SFT-RL"]):
         def _apply_room_classification(obs):
             obs["room_object_graph"] = nx.relabel_nodes(obs["room_object_graph"], self.room_classification)
             for n, d in obs["separated_voronoi_graph"].nodes(data=True):
@@ -411,15 +423,11 @@ class LLMEnv(HighLevelEnv):
                                                                                 vor_graph=obs["separated_voronoi_graph"],)
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
-            # self.llm.train_SFT(conversation)
-            self.llm.train_PPO(reward=reward)
-            self.llm.train_SFT(conversation)
+            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
         except:
             subpolicy_success = False
             done = False
-            # self.llm.train_SFT(conversation)
-            self.llm.train_PPO(reward=-0.1)
-            self.llm.train_SFT(conversation)
+            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
             # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
             
         conversation.add_message(self.last_env_feedback)
@@ -436,8 +444,8 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
-            retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
-            conversation.add_message({"role": "user", "content": retrial_prompt})
+            # retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
+            # conversation.add_message({"role": "user", "content": retrial_prompt})
             response, action, argument = self.send_query(conversation=conversation)
             try:
                 subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
@@ -446,9 +454,7 @@ class LLMEnv(HighLevelEnv):
                                                                                     graph=graph,
                                                                                     vor_graph=obs["separated_voronoi_graph"])
             except:
-                # self.llm.train_SFT(conversation)
-                self.llm.train_PPO(reward=-0.1)
-                self.llm.train_SFT(conversation)
+                self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
                 # conversation.add_message({"role": "user", "content": "The action cannot be executed. Might be some logical errors or format errors."})
                 # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
                 # conversation.add_message({})
@@ -458,9 +464,7 @@ class LLMEnv(HighLevelEnv):
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
 
-            # self.llm.train_SFT(conversation)
-            self.llm.train_PPO(reward=reward)
-            self.llm.train_SFT(conversation)
+            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
             self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             num_retries += 1
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):
@@ -581,8 +585,6 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
-            retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
-            conversation.add_message({"role": "user", "content": retrial_prompt})
             response, action, argument = self.send_query(conversation=conversation)
 
             subpolicy_success, done, self.last_env_feedback = self.execute_action(action=action,

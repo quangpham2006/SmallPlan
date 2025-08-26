@@ -1,5 +1,6 @@
 preadapted_outputs_path: /workspace/khointn/outputs
 smallplan_outputs_path: ./rl_outputs
-slm_api_model: Phi-4-mini-reasoning-unsloth-bnb-4bit
+slm_api_model: Qwen3_4B_4bit
+strategy: RL-SFT # RL-SFT, SFT, SFT-RL
 slm_api_host: 0.0.0.0
-slm_api_port: 8888
+slm_api_port: 8887
