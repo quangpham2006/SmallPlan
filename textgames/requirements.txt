@@ -1,0 +1,16 @@
+sympy
+numpy
+pandas
+termcolor
+gradio
+openai
+cohere
+transformers
+torch
+accelerate
+bitsandbytes
+itsdangerous
+authlib
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
