@@ -13,7 +13,7 @@ logger= logging.getLogger(__name__)
 logger.info("TRL version:", trl.__version__)  # Should show 0.10.1
 
 class SLMTrainer:
-    def __init__(self, model_name="/workspace/khointn/outputs/Llama-3.2-1B-Instruct-unsloth-bnb-4bit"):
+    def __init__(self, model_name: str):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         peft_model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(model_name), 
                                                model_name, 
