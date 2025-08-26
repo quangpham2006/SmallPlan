@@ -3,7 +3,7 @@
 # modifications thereto. Any use, reproduction, disclosure or distribution of
 # this software and related documentation without an express license agreement
 # from Toyota Motor Europe NV/SA is strictly prohibited.
-wandb: false
+wandb: true
 agent: moma_llm  # moma_llm / json_llm / greedy / random
 # whether to use the distances and room-object assignments based on viewpoint & voronoi. If false, use dists purely from A* and room assignment to closest voronoi node (w/o viewpoint)
 use_viewpoint_assignment: true
