@@ -427,7 +427,7 @@ class LLMEnv(HighLevelEnv):
         except:
             subpolicy_success = False
             done = False
-            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
+            self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
             # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
             
         conversation.add_message(self.last_env_feedback)
@@ -454,7 +454,7 @@ class LLMEnv(HighLevelEnv):
                                                                                     graph=graph,
                                                                                     vor_graph=obs["separated_voronoi_graph"])
             except:
-                self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
+                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
                 # conversation.add_message({"role": "user", "content": "The action cannot be executed. Might be some logical errors or format errors."})
                 # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
                 # conversation.add_message({})
