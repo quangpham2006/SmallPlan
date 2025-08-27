@@ -1,9 +1,11 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
+from unsloth import FastLanguageModel
 from trl import PPOConfig, PPOTrainer, AutoModelForCausalLMWithValueHead
 import torch
 import os
 import logging
+from typing import Literal
 import trl
 from dotenv import load_dotenv
 
@@ -13,30 +15,58 @@ logger= logging.getLogger(__name__)
 logger.info("TRL version:", trl.__version__)  # Should show 0.10.1
 
 class SLMTrainer:
-    def __init__(self, model_name: str):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        peft_model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(model_name), 
-                                               model_name, 
-                                               is_trainable=True)
-        # Wrap with value head for RL
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(peft_model).to("cuda")
-        
-        # Set up both RL and SFT components
-        logger.info("Init SFT Trainer")
-        self.sft_trainer = torch.optim.AdamW(self.model.pretrained_model.parameters(), lr=1e-5)
+    def __init__(self, model_name: str, mode: Literal["train", "eval"]):
+        if mode == "train":
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            peft_model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(model_name), 
+                                                model_name, 
+                                                is_trainable=True)
+            # Wrap with value head for RL
+            self.model = AutoModelForCausalLMWithValueHead.from_pretrained(peft_model).to("cuda")
+            
+            # Set up both RL and SFT components
+            logger.info("Init SFT Trainer")
+            self.sft_trainer = torch.optim.AdamW(self.model.pretrained_model.parameters(), lr=1e-5)
 
-        logger.info("Init PPO Trainer")
-        self.ppo_config = PPOConfig(
-            batch_size=1,
-            mini_batch_size=1,
-            learning_rate=1e-5,
-            gradient_accumulation_steps=1,
-        )
-        self.ppo_trainer = PPOTrainer(
-            model=self.model,
-            config=self.ppo_config,
-            tokenizer=self.tokenizer,
-        )
+            logger.info("Init PPO Trainer")
+            self.ppo_config = PPOConfig(
+                batch_size=1,
+                mini_batch_size=1,
+                learning_rate=1e-5,
+                gradient_accumulation_steps=1,
+            )
+            self.ppo_trainer = PPOTrainer(
+                model=self.model,
+                config=self.ppo_config,
+                tokenizer=self.tokenizer,
+            )
+
+        elif mode == "eval":
+            base_model, self.tokenizer = FastLanguageModel.from_pretrained(
+                model_name=model_name,
+                max_seq_length=4096,
+                dtype=torch.float16,
+                load_in_4bit=True,
+            )
+
+            peft_model = FastLanguageModel.get_peft_model(
+                base_model,
+                r = 16, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+                target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                                  "gate_proj", "up_proj", "down_proj",],
+                lora_alpha = 16,
+                lora_dropout = 0, # Supports any, but = 0 is optimized
+                bias = "none",    # Supports any, but = "none" is optimized
+                use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
+                random_state = 3407,
+                use_rslora = False,
+                loftq_config = None,
+            )
+
+            self.model = peft_model.to("cuda")
+
+        else:
+            raise ValueError("Mode must be either 'train' or 'eval'")
         
         self.last_input = None
         self.last_output = None
@@ -50,7 +80,7 @@ class SLMTrainer:
         inputs = self.tokenizer([text], return_tensors="pt").to("cuda")
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=256,
+            max_new_tokens=512,
             pad_token_id=self.tokenizer.pad_token_id,
             use_cache=False, 
         )

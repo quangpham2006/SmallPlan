@@ -139,7 +139,7 @@ class LLMEnv(HighLevelEnv):
         if len(labeled_rooms_not_found) > 0:
             print("Rooms that were labeled but not contained in the room object graph: ", labeled_rooms_not_found)
 
-    def parse_llm_action(self, response: str):
+    def parse_llm_action(self, response: str, mode: Literal['train', 'eval']):
         action = None
         command_found = False
         for line in response.split("\n"):
@@ -161,7 +161,10 @@ class LLMEnv(HighLevelEnv):
         if not action:
             # TODO: better to re-prompt the LLM instead?
             print("Could not parse any command. Assuming this is because the LLM did not find a reasonable action. So calling done() instead.")
-            action = "format error"
+            if mode=='train':
+                action = "format error"
+            elif mode=='eval':
+                action = "done"
             argument = ""
             self.episode_info["failure_reason"] = "Unable to prompt LLM command."
             
@@ -299,9 +302,9 @@ class LLMEnv(HighLevelEnv):
                 nlp_history.append(nlp)
         return nlp_history
     
-    def send_query(self, conversation: str):
+    def send_query(self, conversation: str, mode: Literal['train', 'eval']):
         response = self.llm.send_query(conversation=conversation)
-        action, argument = self.parse_llm_action(response)
+        action, argument = self.parse_llm_action(response, mode)
         return response, action, argument
 
     def compute_reward(self, env_feedback, obs, new_obs):
@@ -412,7 +415,7 @@ class LLMEnv(HighLevelEnv):
                                            graph=graph,
                                            room_graph=obs["room_graph"],
                                            room_distances=room_distances)
-        response, action, argument = self.send_query(conversation=conversation)
+        response, action, argument = self.send_query(conversation=conversation, mode='train')
 
         robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
         try:
@@ -446,7 +449,7 @@ class LLMEnv(HighLevelEnv):
                 break
             # retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
             # conversation.add_message({"role": "user", "content": retrial_prompt})
-            response, action, argument = self.send_query(conversation=conversation)
+            response, action, argument = self.send_query(conversation=conversation, mode='train')
             try:
                 subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
                                                                                     argument=argument,
@@ -561,7 +564,7 @@ class LLMEnv(HighLevelEnv):
                                            graph=graph,
                                            room_graph=obs["room_graph"],
                                            room_distances=room_distances)
-        response, action, argument = self.send_query(conversation=conversation)
+        response, action, argument = self.send_query(conversation=conversation, mode='eval')
 
         robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
 
@@ -585,9 +588,9 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
-            response, action, argument = self.send_query(conversation=conversation)
+            response, action, argument = self.send_query(conversation=conversation, mode='eval')
 
-            subpolicy_success, done, self.last_env_feedback = self.execute_action(action=action,
+            subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
                                                                                   argument=argument,
                                                                                   task_desc=task_description,
                                                                                   graph=graph,
