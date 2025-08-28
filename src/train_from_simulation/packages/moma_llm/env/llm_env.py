@@ -307,7 +307,7 @@ class LLMEnv(HighLevelEnv):
         old_distance_travel = np.linalg.norm(np.diff(np.stack(obs["robot_traj"])[:, :2, 3], axis=0), axis=-1).sum()
         new_distance_travel = np.linalg.norm(np.diff(np.stack(new_obs["robot_traj"])[:, :2, 3], axis=0), axis=-1).sum()
         reward_distance = - gamma_distance_travel*(new_distance_travel - old_distance_travel)/30
-        # reward_step = 
+
         print("---------------Reward------------------: ", reward_subtask + reward_explore + reward_distance)
         return reward_subtask + reward_explore + reward_distance
 
@@ -477,8 +477,16 @@ class LLMEnv(HighLevelEnv):
             obs["room_object_graph"] = nx.relabel_nodes(obs["room_object_graph"], self.room_classification)
             for n, d in obs["separated_voronoi_graph"].nodes(data=True):
                 d["room_id"] = self.room_classification[NODETYPE.roomname(d["room_id"])]
-        self.classify_rooms(obs)
-        _apply_room_classification(obs)
+
+        try:
+            self.classify_rooms(obs)
+            _apply_room_classification(obs)
+        except:
+            print("Failed to classify room.")
+            done = False
+            task_success = False
+            return done, task_success, self.episode_info
+
         
         graph = obs["room_object_graph"]
         labelled_rooms = list(graph.successors("root"))

@@ -164,6 +164,7 @@ class LLM_hugging:
             # print("Assistant:", assistant_response)
         else:
             print(f"Error: {response.status_code}, {response.text}")
+            assistant_response = ""
 
         
         if self.debug:
@@ -271,7 +272,7 @@ class LLM_hugging:
 
         llm_request = ""
         if not self.open_set_rooms:
-            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. If you are unsure, classify them as other room.\n"
+            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. If you are unsure or the room is empty, classify them as other room.\n"
         else:
             llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
 
