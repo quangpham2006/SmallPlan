@@ -567,6 +567,8 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
+            retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. The reason of failure is {self.last_env_feedback}. Follow the analysis, reasoning and response also."
+            conversation.add_message({"role": "user", "content": retrial_prompt})
             response, action, argument = self.send_query(conversation=conversation, mode='eval')
 
             subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
@@ -583,8 +585,9 @@ class LLMEnv(HighLevelEnv):
         self.episode_info["total_num_retrials"] += num_retries
         self.episode_info["steps_with_retrial"] += (num_retries > 0)
 
-        if done:
+        if self.evaluate_success():
             task_success = self.evaluate_success()
+            done = True
         else:
             task_success = False
 
@@ -597,6 +600,10 @@ class LLMEnv(HighLevelEnv):
         if len(self.prev_responses) > 6:
             del self.prev_responses[0]
         self.prev_responses.append(response)
+
+        if hasattr(self.llm, 'get_episode_metrics'):
+            llm_metrics = self.llm.get_episode_metrics()
+            self.episode_info.update(llm_metrics)
 
         return done, task_success, self.episode_info
 
