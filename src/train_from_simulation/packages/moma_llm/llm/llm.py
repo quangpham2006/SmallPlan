@@ -17,6 +17,7 @@ from pygments.lexers import PythonLexer
 from sty import fg
 
 from moma_llm.utils.constants import NODETYPE, POSSIBLE_ROOMS
+from moma_llm.env.prompts import ROOM_CLASSIFICATION_SYSTEM_PROMPT, ROOM_CLASSIFICATION_USER_PROMPT
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
@@ -257,27 +258,35 @@ class LLM_hugging:
             pprint(room_classification)
         return room_classification
 
-    def classify_rooms(self, obs, system_prompt: str = "You are a helpful assistant, visiting a new apartment.") -> dict:
+    def classify_rooms(self, obs, system_prompt: str = ROOM_CLASSIFICATION_SYSTEM_PROMPT) -> dict:
         graph = obs["room_object_graph"]
         rooms = list(graph.successors("root"))
         
         room_dict = self.create_room_object_dict(graph, include_explored=False)
 
-        prompt = f"You observe {len(rooms)} rooms, they contain the following objects:\n"
+        num_rooms = len(rooms)
+        room_object_list = ""
         for room in rooms:
-            prompt += f"- {room} contains [{', '.join(room_dict[room])}].\n"
+            room_object_list += f"- {room} contains [{', '.join(room_dict[room])}].\n"
+
+        llm_request = ""
         if not self.open_set_rooms:
-            prompt += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. If you are unsure, classify them as other room.\n"
+            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. If you are unsure, classify them as other room.\n"
         else:
-            prompt += "Please classify the rooms. If you are unsure, classify them as other room.\n"
-        prompt += "Output Response Format:\n"\
-                "A list with bullet points of the form\n"\
-                "- room-X: room type\n"
+            llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
+
+        remember = ""
         if not self.open_set_rooms:
-            prompt += "Remember: you can only use the given categories."
-                           
+            remember += "Remember: you can only use the given categories."
+        
+        user_prompt = ROOM_CLASSIFICATION_USER_PROMPT.format(
+            NUM_ROOMS=num_rooms,
+            ROOM_OBJECT_LIST=room_object_list,
+            REQUESTS=llm_request,
+            REMEMBER=remember,
+        )
         conversation = Conversation(messages=[{"role": "system", "content": system_prompt},
-                                              {"role": "user", "content": prompt}])
+                                              {"role": "user", "content": user_prompt}])
         for i in range(3):
             try:
                 response = self.send_query(conversation=conversation)
@@ -421,27 +430,36 @@ class LLM:
             pprint(room_classification)
         return room_classification
 
-    def classify_rooms(self, obs, system_prompt: str = "You are a helpful assistant, visiting a new apartment.") -> dict:
+    def classify_rooms(self, obs, system_prompt: str = ROOM_CLASSIFICATION_SYSTEM_PROMPT) -> dict:
         graph = obs["room_object_graph"]
         rooms = list(graph.successors("root"))
         
         room_dict = self.create_room_object_dict(graph, include_explored=False)
 
-        prompt = f"You observe {len(rooms)} rooms, they contain the following objects:\n"
+        num_rooms = len(rooms)
+        room_object_list = ""
         for room in rooms:
-            prompt += f"- {room} contains [{', '.join(room_dict[room])}].\n"
+            room_object_list += f"- {room} contains [{', '.join(room_dict[room])}].\n"
+
+        llm_request = ""
         if not self.open_set_rooms:
-            prompt += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. If you are unsure, classify them as other room.\n"
+            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. If you are unsure, classify them as other room.\n"
         else:
-            prompt += "Please classify the rooms. If you are unsure, classify them as other room.\n"
-        prompt += "Output Response Format:\n"\
-                "A list with bullet points of the form\n"\
-                "- room-X: room type\n"
+            llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
+
+        remember = ""
         if not self.open_set_rooms:
-            prompt += "Remember: you can only use the given categories."
+            remember += "Remember: you can only use the given categories."
+        
+        user_prompt = ROOM_CLASSIFICATION_USER_PROMPT.format(
+            NUM_ROOMS=num_rooms,
+            ROOM_OBJECT_LIST=room_object_list,
+            REQUESTS=llm_request,
+            REMEMBER=remember,
+        )
                            
         conversation = Conversation(messages=[{"role": "system", "content": system_prompt},
-                                              {"role": "user", "content": prompt}])
+                                              {"role": "user", "content": user_prompt}])
         for i in range(3):
             try:
                 response = self.send_query(conversation=conversation, model=self.room_classification_model)

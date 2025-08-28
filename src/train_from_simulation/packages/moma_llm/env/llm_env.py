@@ -18,6 +18,7 @@ from scipy.spatial import distance_matrix
 
 from moma_llm.env.env import OurIGibsonEnv
 from moma_llm.env.high_level_env import HighLevelEnv
+from moma_llm.env.prompts import SYSTEM_PROMPT, USER_PROMPT
 from moma_llm.llm.llm import LLM, Conversation, inflect_engine
 from moma_llm.llm.llm import LLM_hugging
 from moma_llm.topology.room_graph import get_closest_node
@@ -185,64 +186,42 @@ class LLMEnv(HighLevelEnv):
                        room_distances,
                        *args, 
                        **kwargs) -> Conversation:
-        system_prompt = f"You are a robot in an unexplored house. Your task is to {task_description}."
-        system_prompt += f" You have the following actions available that you can use to achieve this task:\n"
-        for i, (action, description) in enumerate(self.possible_actions.items()):
-            system_prompt += f"""{i+1}. {action}({description[0]}): {description[1]}\n"""
         
-        # system_prompt += '''
-        #  You will perform the following tasks:
-        #      Analysis: describe where you could find the objects of interest and what actions you need to execute to get there.
-        #      Reasoning: justify why the next action is important to solve the task.
-        #      Command: provide the function call, which is the action function.
- 
-        #  You will output in the json format as follow:
-        #      {
-        #      "Analysis": <your analysis>,
-        #      "Reasoning": <your reasoning>,
-        #      "Command": <your command function call>
-        #      }
-        #  For example:
-        #   {"Analysis": "A towel rack is typically found in a bathroom or sometimes in a laundry room or a kitchen. It might not be in the living room. Since we have an unexplored area very close in the living room and bathroom or laundry room hasn't been discovered yet, it is a reasonable 
-        #     assumption that this unexplored area could be or lead to a bathroom or laundry room where a towel rack would be located.",
-            
-        #     "Reasoning": "Exploring the unexplored area in the living room may reveal the bathroom or laundry room, where we are likely to find a towel rack. Since we are prioritizing opening doors over exploring a room, and there is unexplored space that could potentially have a door to 
-        #     another room, we should explore next.",
-            
-        #     "Command": "explore(living room)"}
-        #  DO NOT provides any other output than the json format that contains the analysis, reasoning, and command.
-        #  '''
-        system_prompt += f"\nOutput Response Format:\n"\
-        "Analysis: describe where you could find the objects of interest and what actions you need to execute to get there.\n"\
-        "Reasoning: justify why the next action is important to solve the task.\n"\
-        "Command: function call"
+        tool_descriptions = ""
+        for i, (action, description) in enumerate(self.possible_actions.items()):
+            tool_descriptions += f"""{i+1}. {action}({description[0]}): {description[1]}\n"""
 
-        prompt = f"You are currently in the {current_room}. You are standing next to the following objects: [{', '.join(sorted(close_objects))}]."
-        prompt += f" Furthermore, you have found the following rooms and objects in the house so far:\n"
+        system_prompt = SYSTEM_PROMPT.format(
+            TASK_DESCRIPTION=task_description,
+            TOOL_DESCRIPTIONS=tool_descriptions
+        )
+
+        list_nearby_objects = sorted(close_objects)
+
+        list_found_rooms_and_objects = ""
         for room in sorted(labelled_rooms):
             objects = room_dict[room] + (["unexplored area"] if room in [r[0] for r in rooms_with_frontier_within] else [])
-            prompt += f"""- {room}: [{", ".join(objects)}].\n"""
+            list_found_rooms_and_objects += f"""- {room}: [{", ".join(objects)}].\n"""
 
         if len(nlp_history):
-            prompt += f"Your {len(nlp_history)} previous actions were: {', '.join(nlp_history)}.\n"
+            list_previous_actions = f"Your {len(nlp_history)} previous actions were: {', '.join(nlp_history)}."
 
         rooms_with_frontier_descr = [f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_frontier_leading_out]
-        prompt += f"These rooms have unexplored space leading out of the room: [{', '.join(rooms_with_frontier_descr)}].\n"
         if len(rooms_with_closed_doors):
-            rooms_with_closed_doors_descr = [f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_closed_doors]
-            prompt += f"These rooms contain closed doors that might open up new space: [{', '.join(rooms_with_closed_doors_descr)}].\n"
+            rooms_with_closed_doors_descr = f"These rooms contain closed doors that might open up new space: {[f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_closed_doors]}."
 
-        prompt += f"""What is the best next action to complete the task as efficiently as possible? I you don't think that the object can be found in a known room, prioritize opening doors over exploring a room.\n"""  # In general, prioritize opening doors if there is not enough evidence to explore a promising room.\n""" 
-        prompt += f"Remember:\n"\
-            "1. Respond with a function call.\n"\
-            "2. You can only use the objects and rooms that you have already found. Object names have to match the description exactly.\n"\
-            "3. You can only explore rooms that are listed as having unexplored space.\n"\
-            "4. If you have found the object you are looking for, directly call done(). You do not need to navigate to it or interact with it.\n"\
-            "5. If some actions failed repeatedly, they may not be possible.\n"
+        user_prompt = USER_PROMPT.format(
+            CURRENT_ROOM=current_room,
+            LIST_NEARBY_OBJECTS= list_nearby_objects,
+            LIST_FOUND_ROOMS_AND_OBJECTS=list_found_rooms_and_objects,
+            LIST_PREVIOUS_ACTIONS=list_previous_actions if len(nlp_history) else "",
+            ROOMS_WITH_FRONTIER_DESCRIPTION=rooms_with_frontier_descr,
+            ROOMS_WITH_CLOSED_DOORS_DESCRIPTION=rooms_with_closed_doors_descr if len(rooms_with_closed_doors) else "",
+        )
 
         conversation = Conversation(messages=[self.last_env_feedback,
                                               {"role": "system", "content": system_prompt},
-                                              {"role": "user", "content": prompt}])
+                                              {"role": "user", "content": user_prompt}])
         return conversation
 
     def _get_close_objects(self, graph, current_room, closeness_thresh: float):
