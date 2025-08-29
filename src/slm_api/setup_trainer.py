@@ -1,6 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
-from unsloth import FastLanguageModel
 from trl import PPOConfig, PPOTrainer, AutoModelForCausalLMWithValueHead
 import torch
 import os
@@ -42,6 +41,7 @@ class SLMTrainer:
             )
 
         elif mode == "eval":
+            from unsloth import FastLanguageModel
             base_model, self.tokenizer = FastLanguageModel.from_pretrained(
                 model_name=model_name,
                 max_seq_length=4096,
