@@ -1,7 +1,8 @@
 preadapted_outputs_path: /workspace/khointn/outputs
 smallplan_outputs_path: ./rl_outputs
-slm_api_model: Llama-3.2-1B-Instruct-unsloth-bnb-4bit
+slm_api_model: Llama-3.2-3B-Instruct-unsloth-bnb-4bit
 last_train_scene: checkpoint_Ihlen_1_int_eps_1
-strategy: SFT # RL-SFT, SFT, SFT-RL
+strategy: RL-SFT # RL-SFT, SFT, SFT-RL
 slm_api_host: 0.0.0.0
-slm_api_port: 8874
+slm_api_port: 4000
+model_tag: 2e-retrial

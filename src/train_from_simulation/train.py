@@ -252,7 +252,7 @@ def main():
     np.set_printoptions(precision=3, suppress=True)
        
     config_file, cfg, wandb_cfg, slm_training_cfg = setup_cfgs()
-    save_dir = f"{slm_training_cfg['smallplan_outputs_path']}/{slm_training_cfg['strategy']}-2e-{slm_training_cfg['slm_api_model']}"
+    save_dir = f"{slm_training_cfg['smallplan_outputs_path']}/{slm_training_cfg['strategy']}-{slm_training_cfg['model_tag']}-{slm_training_cfg['slm_api_model']}"
     slm_api_url = f"http://{slm_training_cfg['slm_api_host']}:{slm_training_cfg['slm_api_port']}"
 
     if cfg["seed"] > 0:
