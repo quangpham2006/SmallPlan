@@ -43,3 +43,5 @@ Output Response Format:
  - room-X: room type
 {REMEMBER}
 '''
+
+RETRIAL_PROMPT = "The last action failed. Please try another command based on the previous message feedback. Note that you must have 'command:' before action."

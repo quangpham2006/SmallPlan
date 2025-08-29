@@ -18,7 +18,7 @@ from scipy.spatial import distance_matrix
 
 from moma_llm.env.env import OurIGibsonEnv
 from moma_llm.env.high_level_env import HighLevelEnv
-from moma_llm.env.prompts import SYSTEM_PROMPT, USER_PROMPT
+from moma_llm.env.prompts import SYSTEM_PROMPT, USER_PROMPT, RETRIAL_PROMPT
 from moma_llm.llm.llm import LLM, Conversation, inflect_engine
 from moma_llm.llm.llm import LLM_hugging
 from moma_llm.topology.room_graph import get_closest_node
@@ -426,8 +426,8 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
-            # retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. Note that you much have 'command:' before action."
-            # conversation.add_message({"role": "user", "content": retrial_prompt})
+
+            conversation.add_message({"role": "user", "content": RETRIAL_PROMPT})
             response, action, argument = self.send_query(conversation=conversation, mode='train')
             try:
                 subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
@@ -575,8 +575,8 @@ class LLMEnv(HighLevelEnv):
                 _apply_room_classification(obs)
             except:
                 break
-            retrial_prompt = f"The last action {action}({argument}) failed. Please try another command. The reason of failure is {self.last_env_feedback}. Follow the analysis, reasoning and response also."
-            conversation.add_message({"role": "user", "content": retrial_prompt})
+
+            conversation.add_message({"role": "user", "content": RETRIAL_PROMPT})
             response, action, argument = self.send_query(conversation=conversation, mode='eval')
 
             subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
@@ -763,7 +763,7 @@ class LLMEnv(HighLevelEnv):
                 self.episode_info["magic_open_actions_gtDone"] = self.episode_info["magic_open_actions"]
 
         print(feedback)
-        feedback_msg = {"role": "env", "content": "; ".join([f"{action}({argument}) success: {subtask_success}", feedback])}
+        feedback_msg = {"role": "env", "content": f"Feedback: {'; '.join([f'{action}({argument}) success: {subtask_success}', feedback])}"}
         engine_feedback = {"action": [action, argument], "success": subtask_success, "feedback": feedback}
         return subtask_success, done, feedback_msg, engine_feedback
 
