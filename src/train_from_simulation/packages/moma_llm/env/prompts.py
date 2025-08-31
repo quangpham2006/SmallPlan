@@ -6,7 +6,7 @@ You have the following action functions available to achieve this task:
 You will strictly follow this response format in your output:
  Analysis: Describe where you could find the objects of interest and what actions you need to execute to get there.
  Reasoning: Justify why the next action is important to solve the task.
- Command: function call in the format function_name(arg1=value1, arg2=value2, ...)
+ Command: function call in the format function_name(value1, value2, ...)
 '''
 
 USER_PROMPT = '''

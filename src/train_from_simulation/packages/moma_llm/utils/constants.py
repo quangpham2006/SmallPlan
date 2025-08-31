@@ -11,8 +11,8 @@ from moma_llm.tasks.patched_scene import CLASS_NAME_TO_CLASS_ID
 
 PROJECT_DIR = Path(__file__).parent.parent.parent
 PACKAGE_DIR = Path(__file__).parent.parent
-# TRAINING_SCENES = ["Merom_0_int", "Benevolence_0_int", "Pomaria_0_int", "Wainscott_1_int", "Rs_int", "Ihlen_0_int", "Beechwood_1_int", "Ihlen_1_int"]
-TRAINING_SCENES = ["Rs_int", "Ihlen_0_int", "Beechwood_1_int", "Ihlen_1_int"] 
+TRAINING_SCENES = ["Merom_0_int", "Benevolence_0_int", "Pomaria_0_int", "Wainscott_1_int", "Rs_int", "Ihlen_0_int", "Beechwood_1_int", "Ihlen_1_int"]
+# TRAINING_SCENES = ["Rs_int", "Ihlen_0_int", "Beechwood_1_int", "Ihlen_1_int"] 
 TEST_SCENES = ["Benevolence_1_int", "Wainscott_0_int", "Pomaria_2_int", "Benevolence_2_int", "Beechwood_0_int", "Pomaria_1_int", "Merom_1_int"]
 MAX_TURN_ANGLE = 0.35
 

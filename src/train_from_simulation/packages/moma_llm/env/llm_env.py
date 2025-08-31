@@ -85,7 +85,7 @@ class LLMEnv(HighLevelEnv):
     def reset(self, config_file, scene_id, episode_num):
         self.prev_responses = [""]
         self.action_history = []
-        self.last_env_feedback = {"role": "env", "content": ""}
+        self.last_env_feedback = {"role": "user", "content": ""}
         return super().reset(config_file, scene_id, episode_num, compute_scene_graph=True)
 
     def classify_rooms(self, obs):
@@ -411,7 +411,8 @@ class LLMEnv(HighLevelEnv):
             done = False
             self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
             # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
-            
+        
+        print(f"Last env feedback: {self.last_env_feedback}")
         conversation.add_message(self.last_env_feedback)
         self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
         
@@ -560,7 +561,7 @@ class LLMEnv(HighLevelEnv):
                                                                               task_desc=task_description,
                                                                               graph=graph,
                                                                               vor_graph=obs["separated_voronoi_graph"],)
-            
+        print(f"Last env feedback: {self.last_env_feedback}")
         conversation.add_message(self.last_env_feedback)
         self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
         
@@ -763,7 +764,7 @@ class LLMEnv(HighLevelEnv):
                 self.episode_info["magic_open_actions_gtDone"] = self.episode_info["magic_open_actions"]
 
         print(feedback)
-        feedback_msg = {"role": "env", "content": f"Feedback: {'; '.join([f'{action}({argument}) success: {subtask_success}', feedback])}"}
+        feedback_msg = {"role": "user", "content": f"Feedback: {'; '.join([f'{action}({argument}) success: {subtask_success}', feedback])}"}
         engine_feedback = {"action": [action, argument], "success": subtask_success, "feedback": feedback}
         return subtask_success, done, feedback_msg, engine_feedback
 
