@@ -557,11 +557,16 @@ class LLMEnv(HighLevelEnv):
 
         robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
 
-        subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
-                                                                              argument=argument,
-                                                                              task_desc=task_description,
-                                                                              graph=graph,
-                                                                              vor_graph=obs["separated_voronoi_graph"],)
+        try:
+            subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
+                                                                                argument=argument,
+                                                                                task_desc=task_description,
+                                                                                graph=graph,
+                                                                                vor_graph=obs["separated_voronoi_graph"],)
+        except:
+            subpolicy_success = False
+            done = False
+
         print(f"Last env feedback: {self.last_env_feedback}")
         conversation.add_message(self.last_env_feedback)
         self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
@@ -581,14 +586,17 @@ class LLMEnv(HighLevelEnv):
 
             conversation.add_message({"role": "user", "content": RETRIAL_PROMPT})
             response, action, argument = self.send_query(conversation=conversation, mode='eval')
-
-            subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
-                                                                                  argument=argument,
-                                                                                  task_desc=task_description,
-                                                                                  graph=graph,
-                                                                                  vor_graph=obs["separated_voronoi_graph"])
-            conversation.add_message(self.last_env_feedback)
-            self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
+            try:
+                subpolicy_success, done, self.last_env_feedback, _ = self.execute_action(action=action,
+                                                                                    argument=argument,
+                                                                                    task_desc=task_description,
+                                                                                    graph=graph,
+                                                                                    vor_graph=obs["separated_voronoi_graph"])
+                conversation.add_message(self.last_env_feedback)
+                self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
+            except:
+                conversation.add_message({"role": "assistant", "content": response})
+                conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
             num_retries += 1
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):
             done = True
