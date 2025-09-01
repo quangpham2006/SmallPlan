@@ -18,7 +18,7 @@ from scipy.spatial import distance_matrix
 
 from moma_llm.env.env import OurIGibsonEnv
 from moma_llm.env.high_level_env import HighLevelEnv
-from moma_llm.env.prompts import SYSTEM_PROMPT, USER_PROMPT, RETRIAL_PROMPT
+from moma_llm.env.prompts import SYSTEM_PROMPT, USER_PROMPT, RETRIAL_PROMPT, RETRIAL_PROMPT_FORMAT_ERROR
 from moma_llm.llm.llm import LLM, Conversation, inflect_engine
 from moma_llm.llm.llm import LLM_hugging
 from moma_llm.topology.room_graph import get_closest_node
@@ -409,8 +409,6 @@ class LLMEnv(HighLevelEnv):
         except:
             subpolicy_success = False
             done = False
-            self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
-            # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
         
         print(f"Last env feedback: {self.last_env_feedback}")
         conversation.add_message(self.last_env_feedback)
@@ -418,7 +416,8 @@ class LLMEnv(HighLevelEnv):
         
         robot_pose_post = np.concatenate((self.env.robots[0].get_position_orientation()))
 
-        num_retries, max_retries = 0, 5
+        num_retries = 0 
+        max_retries = 5
         # only re-try if robot pose didn't change. Otherwise do a normal next high-level step with the new observation
         while (not subpolicy_success) and np.all((robot_pose_post - robot_pose_pre) < 0.1) and (not done) and (num_retries < max_retries):
             # recompute obs so that num_high_level_steps counter is correctly increased
@@ -428,6 +427,8 @@ class LLMEnv(HighLevelEnv):
             except:
                 break
 
+            num_retries += 1
+
             conversation.add_message({"role": "user", "content": RETRIAL_PROMPT})
             response, action, argument = self.send_query(conversation=conversation, mode='train')
             try:
@@ -436,20 +437,20 @@ class LLMEnv(HighLevelEnv):
                                                                                     task_desc=task_description,
                                                                                     graph=graph,
                                                                                     vor_graph=obs["separated_voronoi_graph"])
+
+                conversation.add_message(self.last_env_feedback)
+                new_obs = self.env.get_state(compute_scene_graph=True)
+                reward = self.compute_reward(self.engine_feedback, obs, new_obs)
+                self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
+                self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             except:
-                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
-                # conversation.add_message({"role": "user", "content": "The action cannot be executed. Might be some logical errors or format errors."})
-                # conversation.add_message({"role": "user", "content": f"The action cannot be executed. Might be some logical errors or format errors. The last response you give is {response}"})
-                # conversation.add_message({})
+                # When except is format error, then we only retrain using SFT to correct the format.
+                conversation.add_message({"role": "assistant", "content": response})
+                conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
+                print(f"Response format error. Try to retrain with SFT only.")
+                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy='SFT')
                 continue
-            conversation.add_message(self.last_env_feedback)
 
-            new_obs = self.env.get_state(compute_scene_graph=True)
-            reward = self.compute_reward(self.engine_feedback, obs, new_obs)
-
-            self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
-            self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
-            num_retries += 1
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):
             done = True
             self.episode_info["failure_reason"] = "max retrials reached"
@@ -567,7 +568,8 @@ class LLMEnv(HighLevelEnv):
         
         robot_pose_post = np.concatenate((self.env.robots[0].get_position_orientation()))
 
-        num_retries, max_retries = 0, 5
+        num_retries = 0 
+        max_retries = 5
         # only re-try if robot pose didn't change. Otherwise do a normal next high-level step with the new observation
         while (not subpolicy_success) and np.all((robot_pose_post - robot_pose_pre) < 0.1) and (not done) and (num_retries < max_retries):
             # recompute obs so that num_high_level_steps counter is correctly increased

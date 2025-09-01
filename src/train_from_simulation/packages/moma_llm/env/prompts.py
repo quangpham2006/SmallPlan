@@ -45,3 +45,4 @@ Output Response Format:
 '''
 
 RETRIAL_PROMPT = "The last action failed. Please try another command based on the previous message feedback. Note that you must have 'command:' before action."
+RETRIAL_PROMPT_FORMAT_ERROR = "The last action cannot be executed due to logical errors or format errors in your previous response. Remember to strictly follow the response format and use the available functions only. Please try another command."
