@@ -395,7 +395,7 @@ class LLMEnv(HighLevelEnv):
                                            room_graph=obs["room_graph"],
                                            room_distances=room_distances)
         response, action, argument = self.send_query(conversation=conversation, mode='train')
-
+        conversation.add_message({"role": "assistant", "content": response})
         robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
         try:
             subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
@@ -420,6 +420,7 @@ class LLMEnv(HighLevelEnv):
         max_retries = 5
         # only re-try if robot pose didn't change. Otherwise do a normal next high-level step with the new observation
         while (not subpolicy_success) and np.all((robot_pose_post - robot_pose_pre) < 0.1) and (not done) and (num_retries < max_retries):
+            print(f"WHY GO HEREEEEEEEE???? {subpolicy_success}, {robot_pose_post}, {robot_pose_pre}, {done}, {num_retries}")
             # recompute obs so that num_high_level_steps counter is correctly increased
             obs = self.env.get_state(compute_scene_graph=True)
             try:
@@ -431,6 +432,7 @@ class LLMEnv(HighLevelEnv):
 
             conversation.add_message({"role": "user", "content": RETRIAL_PROMPT})
             response, action, argument = self.send_query(conversation=conversation, mode='train')
+            conversation.add_message({"role": "assistant", "content": response})
             try:
                 subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
                                                                                     argument=argument,
@@ -438,17 +440,17 @@ class LLMEnv(HighLevelEnv):
                                                                                     graph=graph,
                                                                                     vor_graph=obs["separated_voronoi_graph"])
 
-                conversation.add_message(self.last_env_feedback)
                 new_obs = self.env.get_state(compute_scene_graph=True)
                 reward = self.compute_reward(self.engine_feedback, obs, new_obs)
                 self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
+                conversation.add_message(self.last_env_feedback)
                 self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             except:
                 # When except is format error, then we only retrain using SFT to correct the format.
-                conversation.add_message({"role": "assistant", "content": response})
-                conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
                 print(f"Response format error. Try to retrain with SFT only.")
                 self._train_by_strategy(reward=-0.1, conversation=conversation, strategy='SFT')
+                conversation.add_message(self.last_env_feedback)
+                conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
                 continue
 
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):
