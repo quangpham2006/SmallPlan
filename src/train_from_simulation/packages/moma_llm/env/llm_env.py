@@ -206,9 +206,9 @@ class LLMEnv(HighLevelEnv):
         if len(nlp_history):
             list_previous_actions = f"Your {len(nlp_history)} previous actions were: {', '.join(nlp_history)}."
 
-        rooms_with_frontier_descr = [f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_frontier_leading_out]
+        rooms_with_frontier_descr = f"[{', '.join([f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_frontier_leading_out])}]"
         if len(rooms_with_closed_doors):
-            rooms_with_closed_doors_descr = f"These rooms contain closed doors that might open up new space: {[f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_closed_doors]}."
+            rooms_with_closed_doors_descr = f"These rooms contain closed doors that might open up new space: [{', '.join([f'{room} ({distance_mapping(dist)})' for room, dist in rooms_with_closed_doors])}]."
 
         user_prompt = USER_PROMPT.format(
             CURRENT_ROOM=current_room,
@@ -446,9 +446,9 @@ class LLMEnv(HighLevelEnv):
                 self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             except:
                 # When except is format error, then we only retrain using SFT to correct the format.
-                print(f"Response format error. Try to retrain with SFT only.")
-                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy='SFT')
-                conversation.add_message(self.last_env_feedback)
+                print(f"Response format error.")
+                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
+                # conversation.add_message(self.last_env_feedback)
                 conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
                 continue
 
@@ -597,7 +597,7 @@ class LLMEnv(HighLevelEnv):
                 conversation.add_message(self.last_env_feedback)
                 self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             except:
-                conversation.add_message(self.last_env_feedback)
+                # conversation.add_message(self.last_env_feedback)
                 conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
             num_retries += 1
         if (num_retries == max_retries) and (not subpolicy_success) and (not done):

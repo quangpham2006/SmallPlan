@@ -33,10 +33,10 @@ class SLMTrainer:
                 mini_batch_size=1,
                 learning_rate=1e-5,
                 gradient_accumulation_steps=1,
-                target_kl=0.1,  # Add KL divergence target
-                cliprange=0.2,  # Add PPO clipping range
-                cliprange_value=0.2,  # Add value function clipping
-                vf_coef=0.1,  # Value function coefficient
+                # target_kl=0.1,  # Add KL divergence target
+                # cliprange=0.2,  # Add PPO clipping range
+                # cliprange_value=0.2,  # Add value function clipping
+                # vf_coef=0.1,  # Value function coefficient
             )
             self.ppo_trainer = PPOTrainer(
                 model=self.model,
@@ -74,7 +74,7 @@ class SLMTrainer:
         
         self.last_input = None
         self.last_output = None
-        self.last_response_mask = None
+        # self.last_response_mask = None
 
     def chat(self, conversation):
         text = self.tokenizer.apply_chat_template(
@@ -92,8 +92,10 @@ class SLMTrainer:
         torch.cuda.empty_cache()
         self.last_input = inputs.input_ids[0]
         self.last_output = outputs[0][inputs.input_ids.shape[-1]:]
-        # Create response mask for PPO training
-        self.last_response_mask = torch.ones_like(self.last_output, dtype=torch.long)
+        # print("Input shape:", inputs.input_ids.shape)
+        # print("Output shape:", outputs.shape)
+        # self.last_input = inputs.input_ids[0]
+        # self.last_output = outputs[0]
         response = self.tokenizer.decode(self.last_output, skip_special_tokens=True)
         return response
 
@@ -142,7 +144,7 @@ class SLMTrainer:
                 queries=[self.last_input],
                 responses=[self.last_output],
                 scores=[torch.tensor([conversation.reward], dtype=torch.float16, device="cuda")],
-                response_masks=[self.last_response_mask],
+                # response_masks=[self.last_response_mask],
             )
             results_message = "RL updated"
         return results_message
