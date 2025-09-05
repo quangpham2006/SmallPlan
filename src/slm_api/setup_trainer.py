@@ -77,25 +77,23 @@ class SLMTrainer:
         # self.last_response_mask = None
 
     def chat(self, conversation):
+        self.model.eval()
         text = self.tokenizer.apply_chat_template(
             [{"role": msg.role, "content": msg.content} for msg in conversation.messages],
             tokenize=False,
             add_generation_prompt=True
         )
         inputs = self.tokenizer([text], return_tensors="pt").to("cuda")
-        outputs = self.model.generate(
-            **inputs,
-            max_new_tokens=512,
-            pad_token_id=self.tokenizer.pad_token_id,
-            use_cache=False, 
-        )
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=512,
+                pad_token_id=self.tokenizer.pad_token_id,
+                use_cache=False, 
+            )
         torch.cuda.empty_cache()
         self.last_input = inputs.input_ids[0]
         self.last_output = outputs[0][inputs.input_ids.shape[-1]:]
-        # print("Input shape:", inputs.input_ids.shape)
-        # print("Output shape:", outputs.shape)
-        # self.last_input = inputs.input_ids[0]
-        # self.last_output = outputs[0]
         response = self.tokenizer.decode(self.last_output, skip_special_tokens=True)
         return response
 
@@ -103,9 +101,7 @@ class SLMTrainer:
         results = {}
         # Supervised Fine-Tuning
         if conversation.target_response is not None:
-            # print(conversation.messages)
-            # print(conversation.target_response)
-            # print([{"role": msg.role, "content": msg.content} for msg in conversation.messages])
+            self.model.train()
             logger.info(f"Running SFT step")
             full_text = self.tokenizer.apply_chat_template(
                 [{"role": msg.role, "content": msg.content} for msg in conversation.messages],
@@ -139,6 +135,7 @@ class SLMTrainer:
         
         # Reinforcement Learning
         if conversation.reward is not None and self.last_input is not None and self.last_output is not None:
+            self.model.train()
             logger.info(f"Running PPO step")
             self.ppo_trainer.step(
                 queries=[self.last_input],
