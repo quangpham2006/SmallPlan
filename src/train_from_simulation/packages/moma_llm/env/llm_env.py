@@ -473,7 +473,7 @@ class LLMEnv(HighLevelEnv):
             del self.prev_responses[0]
         self.prev_responses.append(response)
 
-        return done, task_success, self.episode_info
+        return done, task_success, self.episode_info, conversation
 
     def take_action_inference(self, obs: dict, task_description: str):
         def _apply_room_classification(obs):
