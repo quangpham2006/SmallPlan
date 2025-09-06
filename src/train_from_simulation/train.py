@@ -182,11 +182,12 @@ def log_summary_table(episode_infos):
 def train_scene(config_file: str, 
                 cfg, 
                 scene_id: str, 
+                epoch_i: int,
                 tot_ep: int, 
                 save_dir: str,
                 slm_api_url: str,
                 strategy: Literal["RL-SFT", "SFT", "SFT-RL"]) -> list:
-    episode_infos = []
+
     high_level_env = create_env(cfg, 
                                 agent=cfg["agent"], 
                                 config_file=config_file, 
@@ -195,48 +196,47 @@ def train_scene(config_file: str,
                                 cheap=cfg["cheap"], 
                                 seed=cfg["seed"],
                                 slm_api_url=slm_api_url)
-    for i in range(cfg["num_episodes_per_scene"]):
-        done = False
-        obs = high_level_env.reset(config_file=config_file, scene_id=scene_id, episode_num=i)
-        print("########################################")
-        logger.info(f"{scene_id} - Starting episode {i + 1} in scene {scene_id}, {tot_ep + 1} overall. Task: {high_level_env.unwrapped.task.task_description}")
-        print("########################################")
-        while not done:
-            high_level_env.visualize(obs)
-            done, task_success, episode_info = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description, strategy=strategy)
-            # env adds last action to the figure title, that's why we log it after the env step
-            wandb.log({"bev_maps": high_level_env.unwrapped.f})
-            obs = high_level_env.get_state(compute_scene_graph=True)
-            pprint(episode_info)
-            
+    
+    done = False
+    obs = high_level_env.reset(config_file=config_file, scene_id=scene_id, episode_num=epoch_i)
+    print("########################################")
+    logger.info(f"Starting epoch {epoch_i + 1} in scene {scene_id}, {tot_ep + 1} overall. Task: {high_level_env.unwrapped.task.task_description}")
+    print("########################################")
+    while not done:
         high_level_env.visualize(obs)
-        if "failure_reason" in episode_info:
-            high_level_env.env.f.suptitle(f"{high_level_env.env.f._suptitle.get_text()}, {episode_info['failure_reason']}")
-        episode_info["bev_maps"] = high_level_env.unwrapped.f
-        episode_info["num_low_level_steps_with_open_cost"] = episode_info["num_low_level_steps"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions"]
-        if episode_info.get("num_low_level_steps_gtDone", None) is not None:
-            episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_gtDone"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions_gtDone"]
-            episode_info["task_success_gtDone"] = True
-        else:
-            episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_with_open_cost"]
-            episode_info["task_success_gtDone"] = task_success
-        episode_info["episode_step"] = tot_ep
-        episode_info["spl"] = episode_info["task_success"] * (episode_info["shortest_dist"] / max(episode_info["shortest_dist"], episode_info["dist_travelled"]))
+        done, task_success, episode_info = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description, strategy=strategy)
+        # env adds last action to the figure title, that's why we log it after the env step
+        wandb.log({"bev_maps": high_level_env.unwrapped.f})
+        obs = high_level_env.get_state(compute_scene_graph=True)
         pprint(episode_info)
-        # episode_info["rgb"] = wandb.Video((255 * np.transpose(np.stack(high_level_env.env.rgb_frames, axis=0), (0, 3, 1, 2))).astype(np.uint8), fps=6)
-        wandb.log({k: float(v) if isinstance(v, bool) else v for k, v in episode_info.items()})
+        
+    high_level_env.visualize(obs)
+    if "failure_reason" in episode_info:
+        high_level_env.env.f.suptitle(f"{high_level_env.env.f._suptitle.get_text()}, {episode_info['failure_reason']}")
+    episode_info["bev_maps"] = high_level_env.unwrapped.f
+    episode_info["num_low_level_steps_with_open_cost"] = episode_info["num_low_level_steps"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions"]
+    if episode_info.get("num_low_level_steps_gtDone", None) is not None:
+        episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_gtDone"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions_gtDone"]
+        episode_info["task_success_gtDone"] = True
+    else:
+        episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_with_open_cost"]
+        episode_info["task_success_gtDone"] = task_success
+    episode_info["episode_step"] = tot_ep
+    episode_info["spl"] = episode_info["task_success"] * (episode_info["shortest_dist"] / max(episode_info["shortest_dist"], episode_info["dist_travelled"]))
+    pprint(episode_info)
+    # episode_info["rgb"] = wandb.Video((255 * np.transpose(np.stack(high_level_env.env.rgb_frames, axis=0), (0, 3, 1, 2))).astype(np.uint8), fps=6)
+    wandb.log({k: float(v) if isinstance(v, bool) else v for k, v in episode_info.items()})
 
-        episode_infos.append(episode_info)
-        successes = [e["task_success"] for e in episode_infos]
-        tot_ep += 1
-        logger.info(f"Task success: {task_success} (wandb_step: {wandb.run.step}). \
-                    Current successes: {sum(successes)}/{len(successes)}")
-        high_level_env.llm.save_checkpoint(save_name=f"{save_dir}/checkpoint_{scene_id}_eps_{i}")
-    scene_logs = calculcate_metric_means({scene_id: episode_infos})
+    successes = [episode_info["task_success"]]
+    tot_ep += 1
+    logger.info(f"Task success: {task_success} (wandb_step: {wandb.run.step}). \
+                Current successes: {sum(successes)}/{len(successes)}")
+    high_level_env.llm.save_checkpoint(save_name=f"{save_dir}/eps_{epoch_i}_checkpoint_{scene_id}")
+    scene_logs = calculcate_metric_means({scene_id: [episode_info]})
     wandb.log({f"{scene_id}_{k}": v for k, v in scene_logs[scene_id].items()})
     
     high_level_env.close()
-    return episode_infos, tot_ep
+    return [episode_info], tot_ep
 
 def setup_cfgs():
     # NOTE: igibson will reload the config file, so changes here won't be relfected! 
@@ -283,16 +283,19 @@ def main():
     tot_ep = 0
     if isinstance(scene_ids, str):
         scene_ids = [scene_ids]
-    for scene_id in scene_ids:
-        infos, tot_ep = train_scene(config_file=config_file, 
-                                    cfg=cfg, 
-                                    scene_id=scene_id, 
-                                    tot_ep=tot_ep,
-                                    save_dir=save_dir,
-                                    slm_api_url=slm_api_url,
-                                    strategy=slm_training_cfg["strategy"])
+    for epoch in range(cfg["num_episodes_per_scene"]):
+        for scene_id in scene_ids:
+            infos, tot_ep = train_scene(config_file=config_file, 
+                                        cfg=cfg, 
+                                        scene_id=scene_id,
+                                        epoch_i=epoch,
+                                        tot_ep=tot_ep,
+                                        save_dir=save_dir,
+                                        slm_api_url=slm_api_url,
+                                        strategy=slm_training_cfg["strategy"])
 
-        episode_infos[scene_id] = infos
+            episode_infos[f"{scene_id}_epoch{epoch}"] = infos
+            task_success = [e["task_success"] for e in infos]
     log_summary_table(episode_infos=episode_infos)
     plot_efficiency_curves(episode_infos=episode_infos, max_hl_steps=cfg["max_high_level_steps"])
     
