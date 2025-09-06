@@ -33,8 +33,6 @@ logger = logging.getLogger(__name__)
 
 igibson_indoor_scene.InteractiveIndoorScene._add_object = MonkeyPatchedInteractiveIndoorScene._add_object
 igibson_indoor_scene.InteractiveIndoorScene._orig_add_object = MonkeyPatchedInteractiveIndoorScene._orig_add_object
-
-
 def create_env(cfg, 
                agent: str, 
                config_file: str, 
@@ -128,7 +126,6 @@ def plot_efficiency_curves(episode_infos, max_hl_steps: int):
     ll_auc_gtDone, ll_plot_gtDone = _get_auc(steps=ll_steps_gtDone, task_success=task_success_gtDone, max_x=ll_auc_max_steps, title="Low-level-step-curve-gtDone")
     wandb.log({"efficiency_curve_low_level_steps_gtDone": ll_plot_gtDone, "ll_auc_gtDone": ll_auc_gtDone}) 
    
-
 def calculcate_metric_means(episode_infos):
     columns = sorted(list(episode_infos.values())[0][0].keys())
     scene_logs = defaultdict(dict)
@@ -145,7 +142,6 @@ def calculcate_metric_means(episode_infos):
                 continue
             print(column, d) 
     return scene_logs
-
 
 def log_summary_table(episode_infos):
     def _check_float(v):
@@ -178,15 +174,15 @@ def log_summary_table(episode_infos):
     avg_dict["overview_table"] = wandb.Table(columns=columns, data=np.array(data).astype(str))
     wandb.log(avg_dict)
     
-    
-def train_scene(config_file: str, 
+
+def run_scene_and_collect_responses(config_file: str, 
                 cfg, 
                 scene_id: str, 
                 tot_ep: int, 
                 save_dir: str,
                 slm_api_url: str,
                 strategy: Literal["RL-SFT", "SFT", "SFT-RL"]) -> list:
-    episode_infos = []
+    
     high_level_env = create_env(cfg, 
                                 agent=cfg["agent"], 
                                 config_file=config_file, 
@@ -195,45 +191,57 @@ def train_scene(config_file: str,
                                 cheap=cfg["cheap"], 
                                 seed=cfg["seed"],
                                 slm_api_url=slm_api_url)
-    for i in range(cfg["num_episodes_per_scene"]):
-        conversation = []
-        done = False
-        obs = high_level_env.reset(config_file=config_file, scene_id=scene_id, episode_num=i)
-        while not done:
-            high_level_env.visualize(obs)
-            done, task_success, episode_info, slm_response = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description, strategy=strategy)
-            conversation.append(slm_response)
-            # env adds last action to the figure title, that's why we log it after the env step
-            wandb.log({"bev_maps": high_level_env.unwrapped.f})
-            obs = high_level_env.get_state(compute_scene_graph=True)
-            pprint(episode_info)
-            
-        high_level_env.visualize(obs)
-        if "failure_reason" in episode_info:
-            high_level_env.env.f.suptitle(f"{high_level_env.env.f._suptitle.get_text()}, {episode_info['failure_reason']}")
-        episode_info["bev_maps"] = high_level_env.unwrapped.f
-        episode_info["num_low_level_steps_with_open_cost"] = episode_info["num_low_level_steps"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions"]
-        if episode_info.get("num_low_level_steps_gtDone", None) is not None:
-            episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_gtDone"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions_gtDone"]
-            episode_info["task_success_gtDone"] = True
-        else:
-            episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_with_open_cost"]
-            episode_info["task_success_gtDone"] = task_success
-        episode_info["spl"] = episode_info["task_success"] * (episode_info["shortest_dist"] / max(episode_info["shortest_dist"], episode_info["dist_travelled"]))
-        pprint(episode_info)
-        # episode_info["rgb"] = wandb.Video((255 * np.transpose(np.stack(high_level_env.env.rgb_frames, axis=0), (0, 3, 1, 2))).astype(np.uint8), fps=6)
-        wandb.log({k: float(v) if isinstance(v, bool) else v for k, v in episode_info.items()})
 
-        episode_infos.append(episode_info)
-        successes = [e["task_success"] for e in episode_infos]
-        logger.info(f"Task success: {task_success} (wandb_step: {wandb.run.step}). \
-                    Current successes: {sum(successes)}/{len(successes)}")
-        high_level_env.llm.save_checkpoint(save_name=f"{save_dir}/checkpoint_{scene_id}_eps_{i}")
-    scene_logs = calculcate_metric_means({scene_id: episode_infos})
-    wandb.log({f"{scene_id}_{k}": v for k, v in scene_logs[scene_id].items()})
+    done = False
+    obs = high_level_env.reset(config_file=config_file, scene_id=scene_id, episode_num=np.random.randint(0, 1000))
+    while not done:
+        high_level_env.visualize(obs)
+        done, task_success, episode_info, conversation, reward = high_level_env.take_action(obs=obs, task_description=high_level_env.unwrapped.task.task_description, strategy=strategy)
+        # env adds last action to the figure title, that's why we log it after the env step
+        wandb.log({"bev_maps": high_level_env.unwrapped.f})
+        obs = high_level_env.get_state(compute_scene_graph=True)
+        pprint(episode_info)
+        
+    high_level_env.visualize(obs)
+    if "failure_reason" in episode_info:
+        high_level_env.env.f.suptitle(f"{high_level_env.env.f._suptitle.get_text()}, {episode_info['failure_reason']}")
+    episode_info["bev_maps"] = high_level_env.unwrapped.f
+    episode_info["num_low_level_steps_with_open_cost"] = episode_info["num_low_level_steps"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions"]
+    if episode_info.get("num_low_level_steps_gtDone", None) is not None:
+        episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_gtDone"] + high_level_env.env.config["magic_open_cost"] * episode_info["magic_open_actions_gtDone"]
+        episode_info["task_success_gtDone"] = True
+    else:
+        episode_info["num_low_level_steps_with_open_cost_gtDone"] = episode_info["num_low_level_steps_with_open_cost"]
+        episode_info["task_success_gtDone"] = task_success
+    episode_info["spl"] = episode_info["task_success"] * (episode_info["shortest_dist"] / max(episode_info["shortest_dist"], episode_info["dist_travelled"]))
+    pprint(episode_info)
+    # episode_info["rgb"] = wandb.Video((255 * np.transpose(np.stack(high_level_env.env.rgb_frames, axis=0), (0, 3, 1, 2))).astype(np.uint8), fps=6)
+    wandb.log({k: float(v) if isinstance(v, bool) else v for k, v in episode_info.items()})
+
+    is_success = episode_info["task_success"]
     
     high_level_env.close()
-    return episode_infos
+    return episode_info, is_success, conversation, reward
+
+def save_responses_from_scene(tokenizer, conversations, output_path = 'response_outputs'):
+    json_prompts = []
+    for conv_id, conv in enumerate(conversations)
+        prompt = tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
+        ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        prompt = tokenizer.decode(ids, skip_special_tokens=True)
+        json_prompts.append({
+                    "conv_id": conv_id,
+                    "prompt": prompt
+                })
+
+    with open(output_path, 'w', encoding="utf-8") as f:
+        for line in json_prompts:
+            f.write(f"{line}\n")
+
+        f.close()
+
+def train_batch():
+    pass
 
 def setup_cfgs():
     # NOTE: igibson will reload the config file, so changes here won't be relfected! 

@@ -394,9 +394,11 @@ class LLMEnv(HighLevelEnv):
                                            graph=graph,
                                            room_graph=obs["room_graph"],
                                            room_distances=room_distances)
+        
         response, action, argument = self.send_query(conversation=conversation, mode='train')
         conversation.add_message({"role": "assistant", "content": response})
         robot_pose_pre = np.concatenate((self.env.robots[0].get_position_orientation()))
+        avg_reward = []
         try:
             subpolicy_success, done, self.last_env_feedback, self.engine_feedback = self.execute_action(action=action,
                                                                                 argument=argument,
@@ -405,6 +407,7 @@ class LLMEnv(HighLevelEnv):
                                                                                 vor_graph=obs["separated_voronoi_graph"],)
             new_obs = self.env.get_state(compute_scene_graph=True)
             reward = self.compute_reward(self.engine_feedback, obs, new_obs)
+            avg_reward.append(reward)
             self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
         except:
             subpolicy_success = False
@@ -441,13 +444,16 @@ class LLMEnv(HighLevelEnv):
 
                 new_obs = self.env.get_state(compute_scene_graph=True)
                 reward = self.compute_reward(self.engine_feedback, obs, new_obs)
-                self._train_by_strategy(reward=reward, conversation=conversation, strategy=strategy)
+                avg_reward.append(reward)
+                self._train_by_strategy(reward=reward, conversation=conversation, strategy='SFT')
                 conversation.add_message(self.last_env_feedback)
                 self.plot_conversation(conversation=conversation, action=action, argument=argument, ax=self.env.ax[0])
             except:
                 # When except is format error, then we only retrain using SFT to correct the format.
                 print(f"Response format error.")
-                self._train_by_strategy(reward=-0.1, conversation=conversation, strategy=strategy)
+                reward = -0.1
+                avg_reward.append(reward)
+                self._train_by_strategy(reward=reward, conversation=conversation, strategy='SFT')
                 # conversation.add_message(self.last_env_feedback)
                 conversation.add_message({"role": "user", "content": RETRIAL_PROMPT_FORMAT_ERROR})
                 continue
@@ -473,7 +479,8 @@ class LLMEnv(HighLevelEnv):
             del self.prev_responses[0]
         self.prev_responses.append(response)
 
-        return done, task_success, self.episode_info, conversation
+        avg_reward = np.mean(avg_reward)
+        return done, task_success, self.episode_info, conversation, avg_reward
 
     def take_action_inference(self, obs: dict, task_description: str):
         def _apply_room_classification(obs):
