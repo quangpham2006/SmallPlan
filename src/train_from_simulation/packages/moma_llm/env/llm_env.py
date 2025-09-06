@@ -196,7 +196,7 @@ class LLMEnv(HighLevelEnv):
             TOOL_DESCRIPTIONS=tool_descriptions
         )
 
-        list_nearby_objects = sorted(close_objects)
+        list_nearby_objects = f"[{', '.join(sorted(close_objects))}]"
 
         list_found_rooms_and_objects = ""
         for room in sorted(labelled_rooms):
