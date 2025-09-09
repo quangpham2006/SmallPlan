@@ -15,7 +15,10 @@ from src.slm_api.schema import Message, Conversation
 
 parser = ArgumentParser()
 parser.add_argument("--mode", type=str, choices=["train", "eval"], required=True, help="Mode: 'train' or 'eval'")
+parser.add_argument("--path", type=str, required=False)
 mode = str(parser.parse_args().mode)
+model_path = str(parser.parse_args().path)
+print(model_path)
 
 with open('configs/slm_training.yaml', 'r') as file:
             cfg = yaml.safe_load(file)
@@ -23,7 +26,8 @@ with open('configs/slm_training.yaml', 'r') as file:
 if mode == "train":
     model_path = f"{cfg['preadapted_outputs_path']}/{cfg['slm_api_model']}"
 elif mode == "eval":
-    model_path = f"{cfg['smallplan_outputs_path']}/{cfg['strategy']}-{cfg['model_tag']}-{cfg['slm_api_model']}/{cfg['last_train_scene']}"
+    if not model_path:
+        model_path = f"{cfg['smallplan_outputs_path']}/{cfg['strategy']}-{cfg['model_tag']}-{cfg['slm_api_model']}/{cfg['last_train_scene']}"
 else:
      raise ValueError("Mode must be either 'train' or 'eval'")
 

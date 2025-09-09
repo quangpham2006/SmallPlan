@@ -43,6 +43,6 @@ Output Response Format:
  - room-X: room type
 {REMEMBER}
 '''
-
 RETRIAL_PROMPT = "The last action failed. Please try another command based on the previous message feedback. Note that you must have 'command:' before action."
+# RETRIAL_PROMPT = "The last action {ACTION}({ARGS}) failed. The reason of failure is {LAST_ENV_FEEDBACK}. Follow the analysis, reasoning and response also."
 RETRIAL_PROMPT_FORMAT_ERROR = "Feedback: The last action cannot be executed due to logical errors or format errors in your previous response. Remember to strictly follow the response format and use the available functions only."

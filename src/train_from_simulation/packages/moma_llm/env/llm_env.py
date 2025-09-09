@@ -586,6 +586,9 @@ class LLMEnv(HighLevelEnv):
                 break
 
             conversation.add_message({"role": "user", "content": RETRIAL_PROMPT})
+            # conversation.add_message({"role": "user", "content": RETRIAL_PROMPT.format(ACTION = action,
+            #                                                                            ARGS = argument,
+            #                                                                            LAST_ENV_FEEDBACK = self.last_env_feedback)})
             response, action, argument = self.send_query(conversation=conversation, mode='eval')
             conversation.add_message({"role": "assistant", "content": response})
             try:
