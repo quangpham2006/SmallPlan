@@ -20,24 +20,20 @@ import json
 #  ]
 THE_GAMES = {
     k: v.get_game_name() for k, v in [
-        ("1", CrosswordArrangerGame),
-        ("2", Sudoku),
-        ("3", Islands),
-        ("4", PasswordGame),
-        ("5", OrderingTextGame),
-        ("6", AnagramScribble),
-        ("7", BracketGame),
-        ("8", StringSearch),
+        ("1", Islands),
+        ("2", PasswordGame),
+        ("3", OrderingTextGame),
+        ("4", StringSearch),
     ]
 }
 GAME_IDS = list(THE_GAMES.keys())
 GAME_NAMES = list(THE_GAMES.values())
 SINGLE_LINE_GAME_IDS = list(map(lambda g: GAME_IDS[GAME_NAMES.index(g.get_game_name())],
-                                [PasswordGame, BracketGame, StringSearch, AnagramScribble]
+                                [PasswordGame, StringSearch]
                                 ))
 
-LEVEL_IDS = ["1", "2", "3", "4", "0", "00"]
-LEVELS = ["🚅\tEasy", "🚀\tMedium", "🛸\tHard"]
+LEVEL_IDS = ["1", "2"]
+LEVELS = ["🚅\tEasy", "🚀\tMedium"]
 LEVELS_HIDDEN = ["🌌\tInsane", "🔰\tSample #1", "🔰\tSample #2"]
 _show_hidden_level_ = os.getenv("TEXTGAMES_SHOW_HIDDEN_LEVEL", False)
 if _show_hidden_level_:
@@ -55,8 +51,8 @@ def game_filename(_game_name):
 
 
 def _game_class_from_name(game_name):
-    for game_class in [PasswordGame, Sudoku, BracketGame, OrderingTextGame, Islands,
-                       StringSearch, CrosswordArrangerGame, AnagramScribble]:
+    for game_class in [PasswordGame, OrderingTextGame, Islands,
+                       StringSearch]:
         if game_name == game_class.get_game_name():
             return game_class
     return None
