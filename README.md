@@ -50,7 +50,7 @@ conda activate smallplan
 Open another terminal and run
 ```bash
 conda activate igibson
-(igibson) python -m src.train_from_simulation.app
+(igibson) python -m src.train_from_simulation.train
 ```
 ## Citation
 
