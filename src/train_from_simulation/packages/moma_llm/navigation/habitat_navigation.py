@@ -111,12 +111,30 @@ class PyAstarHelper:
         weights[occupied_weights > 0] = PyAstarHelper.OCCUPIED_COST
         
         if add_wall_avoidance_cost:
-            avoid_wall_weights = PyAstarHelper.get_inflated_map_weights(
+            # Add graduated wall avoidance cost - higher cost closer to walls
+            # First ring: very close to obstacles (within inflation + 1 cell)
+            avoid_wall_weights_close = PyAstarHelper.get_inflated_map_weights(
                 binary_occupancy_map,
                 inflation_radius_m=inflation_radius_m + resolution,
                 resolution=resolution
             )
-            weights[avoid_wall_weights > 0] += 1
+            weights[avoid_wall_weights_close > 0] += 10  # High cost very close to walls
+            
+            # Second ring: moderate distance (within inflation + 3 cells)
+            avoid_wall_weights_medium = PyAstarHelper.get_inflated_map_weights(
+                binary_occupancy_map,
+                inflation_radius_m=inflation_radius_m + 3 * resolution,
+                resolution=resolution
+            )
+            weights[avoid_wall_weights_medium > 0] += 3  # Medium cost near walls
+            
+            # Third ring: further away (within inflation + 5 cells) - slight preference for open space
+            avoid_wall_weights_far = PyAstarHelper.get_inflated_map_weights(
+                binary_occupancy_map,
+                inflation_radius_m=inflation_radius_m + 5 * resolution,
+                resolution=resolution
+            )
+            weights[avoid_wall_weights_far > 0] += 1  # Small cost to prefer open areas
             
         weights += 1
         return weights

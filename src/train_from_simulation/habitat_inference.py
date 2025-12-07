@@ -289,9 +289,11 @@ def evaluate_scene(config_file: str,
             episode_info["task_success_gtDone"] = task_success
             
         episode_info["episode_step"] = tot_ep
+        # Handle None values for shortest_dist and dist_travelled
+        shortest_dist = episode_info.get("shortest_dist") or 1
+        dist_travelled = episode_info.get("dist_travelled") or 1
         episode_info["spl"] = episode_info.get("task_success", False) * (
-            episode_info.get("shortest_dist", 1) /
-            max(episode_info.get("shortest_dist", 1), episode_info.get("dist_travelled", 1))
+            shortest_dist / max(shortest_dist, dist_travelled)
         )
         
         pprint(episode_info)

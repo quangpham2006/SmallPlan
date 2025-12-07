@@ -357,7 +357,7 @@ class OurHabitatEnv:
             "max_step": 10000000,
             "max_high_level_steps": 50,
             "control_freq": 10.0,
-            "navigation_inflation_radius": 0.1,
+            "navigation_inflation_radius": 0.25,  # Robot clearance from obstacles (meters)
             "magic_open_cost": 30,
             "consider_open_actions": True,
             "use_viewpoint_assignment": True,
