@@ -7,7 +7,44 @@ from enum import IntEnum, Enum
 import numpy as np
 from pathlib import Path
 
-from moma_llm.tasks.patched_scene import CLASS_NAME_TO_CLASS_ID
+# Try to import iGibson CLASS_NAME_TO_CLASS_ID, fall back to default if not available
+try:
+    from moma_llm.tasks.patched_scene import CLASS_NAME_TO_CLASS_ID
+    IGIBSON_CLASSES_AVAILABLE = True
+except ImportError:
+    # Fallback semantic class mappings when iGibson is not available
+    CLASS_NAME_TO_CLASS_ID = {
+        "undefined": 0,
+        "wall": 1,
+        "floor": 2,
+        "ceiling": 17,
+        "door": 4,
+        "window": 9,
+        "chair": 5,
+        "table": 7,
+        "sofa": 10,
+        "bed": 11,
+        "cabinet": 12,
+        "shelf": 13,
+        "desk": 14,
+        "toilet": 15,
+        "sink": 16,
+        "bathtub": 18,
+        "shower": 19,
+        "refrigerator": 20,
+        "oven": 21,
+        "microwave": 22,
+        "plant": 23,
+        "tv": 24,
+        "lamp": 25,
+        "mirror": 26,
+        "picture": 27,
+        "carpet": 28,
+        "floors": 2,
+        "walls": 1,
+        "ceilings": 17,
+    }
+    IGIBSON_CLASSES_AVAILABLE = False
 
 PROJECT_DIR = Path(__file__).parent.parent.parent
 PACKAGE_DIR = Path(__file__).parent.parent

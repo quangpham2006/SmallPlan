@@ -24,10 +24,12 @@ with open('configs/slm_training.yaml', 'r') as file:
             cfg = yaml.safe_load(file)
 
 if mode == "train":
-    model_path = f"{cfg['preadapted_outputs_path']}/{cfg['slm_api_model']}"
+    # model_path = f"{cfg['preadapted_outputs_path']}/{cfg['slm_api_model']}"
+    model_path = cfg["slm_api_model"]
 elif mode == "eval":
     if not model_path:
-        model_path = f"{cfg['smallplan_outputs_path']}/{cfg['strategy']}-{cfg['model_tag']}-{cfg['slm_api_model']}/{cfg['last_train_scene']}"
+        # model_path = f"{cfg['smallplan_outputs_path']}/{cfg['strategy']}-{cfg['model_tag']}-{cfg['slm_api_model']}/{cfg['last_train_scene']}"
+        model_path = cfg["slm_api_model"]
 else:
      raise ValueError("Mode must be either 'train' or 'eval'")
 

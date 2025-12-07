@@ -1,5 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
+# from peft import PeftModel
 from trl import PPOConfig, PPOTrainer, AutoModelForCausalLMWithValueHead
 import torch
 import os
@@ -17,32 +17,32 @@ class SLMTrainer:
     def __init__(self, model_name: str, mode: Literal["train", "eval"]):
         if mode == "train":
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            peft_model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(model_name), 
-                                                model_name, 
-                                                is_trainable=True)
+            # peft_model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(model_name), 
+            #                                     model_name, 
+            #                                     is_trainable=True)
             # Wrap with value head for RL
-            self.model = AutoModelForCausalLMWithValueHead.from_pretrained(peft_model).to("cuda")
+            self.model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name).to("cuda")
             
             # Set up both RL and SFT components
             logger.info("Init SFT Trainer")
-            self.sft_trainer = torch.optim.AdamW(self.model.pretrained_model.parameters(), lr=1e-5)
+            # self.sft_trainer = torch.optim.AdamW(self.model.pretrained_model.parameters(), lr=1e-5)
 
             logger.info("Init PPO Trainer")
-            self.ppo_config = PPOConfig(
-                batch_size=1,
-                mini_batch_size=1,
-                learning_rate=1e-5,
-                gradient_accumulation_steps=1,
+            # self.ppo_config = PPOConfig(
+            #     batch_size=1,
+            #     mini_batch_size=1,
+            #     learning_rate=1e-5,
+            #     gradient_accumulation_steps=1,
                 # target_kl=0.1,  # Add KL divergence target
                 # cliprange=0.2,  # Add PPO clipping range
                 # cliprange_value=0.2,  # Add value function clipping
                 # vf_coef=0.1,  # Value function coefficient
-            )
-            self.ppo_trainer = PPOTrainer(
-                model=self.model,
-                config=self.ppo_config,
-                tokenizer=self.tokenizer,
-            )
+            #)
+            # self.ppo_trainer = PPOTrainer(
+            #     model=self.model,
+            #     config=self.ppo_config,
+            #     tokenizer=self.tokenizer,
+            # )
 
         elif mode == "eval":
             from unsloth import FastLanguageModel

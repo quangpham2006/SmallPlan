@@ -13,7 +13,6 @@ import scipy.ndimage.morphology
 import scipy.stats
 import skfmm
 import skimage
-from igibson.utils.mesh_util import quat2rotmat, xyzw2wxyz
 from scipy.spatial import Voronoi, voronoi_plot_2d
 from scipy.spatial.distance import cdist
 from sklearn.neighbors import KernelDensity

@@ -1,0 +1,125 @@
+# SmallPlan Configuration for Habitat-Lab/Habitat-Sim
+# This replaces the iGibson configuration
+
+wandb: true
+agent: moma_llm  # moma_llm / json_llm / greedy / random
+
+# Whether to use distances and room-object assignments based on viewpoint & voronoi
+use_viewpoint_assignment: true
+
+datasplit: train  # train / test
+
+# Resample episode if the target is detected after the initial 360-turn
+reject_onestep_episodes: false
+
+control_freq: 10.0
+num_episodes_per_scene: 2
+cheap: false
+ground_truth_done_decision: false
+
+# How many low-level steps to count a magic open action
+magic_open_cost: 30
+
+# Scene configuration for Habitat
+scene: habitat
+# Scene ID - can be from iGibson, HM3D, MP3D, or Gibson datasets
+# Example scene IDs (adjust based on your dataset):
+# iGibson: "Rs_int", "Merom_0_int", etc.
+# HM3D minival: "00800-TEEsavR23oF", "00801-HaxA7YrQdEC", etc.
+# MP3D: "17DRP5sb8fy"
+# Gibson: "Beechwood"
+scene_id: "00800-TEEsavR23oF"
+
+build_graph: true
+load_texture: true
+
+# Door handling (simplified for Habitat as doors are typically static)
+should_open_all_doors: false
+should_open_all_interior_doors: false
+use_prior_graph_distribution: false
+prior_graph_object_resample_freq: 1
+allow_inside_objects_as_targets: true
+open_set_room_categories: true
+
+# Domain randomization
+texture_randomization_freq: null
+object_randomization_freq: null
+
+# Robot configuration
+robot:
+  name: Spot  # or "LoCoBot", "Fetch" depending on what you want to simulate
+  height: 1.5
+  radius: 0.1
+  
+# Task configuration
+task: object_search
+seed: 42
+
+# Discount factor
+discount_factor: 0.99
+
+# Termination conditions
+max_step: 10000000000
+max_high_level_steps: 50
+
+# Sensor specifications
+output: [rgb, depth, semantic]
+
+# Image configuration
+fisheye: false
+image_width: 256
+image_height: 256
+vertical_fov: 90  # Habitat typically uses 90 degree FOV
+horizontal_fov: 90
+
+# Depth configuration
+depth_low: 0.0
+depth_high: 5.0
+
+# Detection threshold
+min_points_for_detection: 50
+
+# Sensor noise
+depth_noise_rate: 0.0
+scan_noise_rate: 0.0
+
+# Mapping & topology reasoning
+voxel_size: 0.075
+grid_size_meter: 30
+
+topology:
+  room_sdf_scale: 5
+  room_sdf_thresh: 0.001
+
+# Navigation
+navigation_inflation_radius: 0.1
+trav_map_erosion: 0
+
+# Habitat-specific settings
+habitat:
+  # Path to Habitat data (can also be set via HABITAT_DATA_PATH env var)
+  data_path: "/media/khointn/SmallPlan/data"
+  
+  # Dataset type: igibson, hm3d, mp3d, gibson
+  dataset: "hm3d"
+  
+  # HM3D split (minival, train, val)
+  split: "minival"
+  
+  # GPU device for rendering
+  gpu_device_id: 0
+  
+  # Physics
+  enable_physics: true
+  physics_config_file: "data/default.physics_config.json"
+  
+  # Navigation mesh
+  allow_sliding: true
+  
+  # Episode configuration
+  max_episode_steps: 500
+  
+  # Action configuration (discrete actions)
+  forward_step_size: 0.25  # meters
+  turn_angle: 10  # degrees
+

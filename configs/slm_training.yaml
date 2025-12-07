@@ -1,6 +1,6 @@
 preadapted_outputs_path: /workspace/khointn/outputs
-smallplan_outputs_path: ./rl_outputs
-slm_api_model: Phi-4-mini-instruct-unsloth-bnb-4bit
+smallplan_outputs_path: ./rl_outputs"
+slm_api_model: "unsloth/Phi-4-mini-instruct-unsloth-bnb-4bit" # "unsloth/Llama-3.2-1B-Instruct-unsloth-bnb-4bit"
 last_train_scene: checkpoint_Ihlen_1_int_eps_1
 strategy: SFT # RL-SFT, SFT, SFT-RL
 slm_api_host: 0.0.0.0

@@ -1,2 +1,3 @@
-unsloth=='2025.8.4'
-dotenv
+unsloth==2025.8.4
+python-dotenv
+fastapi
