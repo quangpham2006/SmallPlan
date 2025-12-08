@@ -173,7 +173,7 @@ class LLM_hugging:
     
     def __init__(self,
                  room_classification_model: str,
-                 open_set_rooms: bool = False,
+                 open_set_rooms: bool = True,
                  temperature: float = 0.0,
                  debug: bool = False,
                  slm_api_url: str = None,
@@ -500,13 +500,22 @@ class LLM_hugging:
         room_object_list = ""
         for room in rooms:
             room_object_list += f"- {room} contains [{', '.join(room_dict[room])}].\n"
+        
+        # Debug: Print room contents to help diagnose classification issues
+        if self.debug:
+            print("\n========== ROOM CLASSIFICATION DEBUG ==========")
+            print(f"Total rooms to classify: {num_rooms}")
+            for room in rooms:
+                obj_count = len(room_dict[room])
+                print(f"{room}: {obj_count} objects - {room_dict[room]}")
+            print("=" * 50 + "\n")
 
         llm_request = ""
-        if not self.open_set_rooms:
-            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
-            llm_request += "If you are unsure or the room is empty, classify them as other room.\n"
-        else:
-            llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
+        # if not self.open_set_rooms:
+        llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
+        llm_request += "If you are unsure or the room is empty, classify them as other room.\n"
+        # else:
+            # llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
 
         remember = ""
         if not self.open_set_rooms:
@@ -546,7 +555,7 @@ class LLM:
     def __init__(self,
                  model: str,
                  room_classification_model: str,
-                 open_set_rooms: bool = False,
+                 open_set_rooms: bool = True,
                  temperature: float = 0.0,
                  debug: bool = False) -> None:
         assert os.environ.get("OPENAI_API_KEY", "todo") != "todo", \
@@ -609,13 +618,22 @@ class LLM:
         room_object_list = ""
         for room in rooms:
             room_object_list += f"- {room} contains [{', '.join(room_dict[room])}].\n"
+        
+        # Debug: Print room contents to help diagnose classification issues
+        if self.debug:
+            print("\n========== ROOM CLASSIFICATION DEBUG ==========")
+            print(f"Total rooms to classify: {num_rooms}")
+            for room in rooms:
+                obj_count = len(room_dict[room])
+                print(f"{room}: {obj_count} objects - {room_dict[room]}")
+            print("=" * 50 + "\n")
 
         llm_request = ""
-        if not self.open_set_rooms:
-            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
-            llm_request += "If you are unsure, classify them as other room.\n"
-        else:
-            llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
+        #  if not self.open_set_rooms:
+        llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
+        llm_request += "If you are unsure, classify them as other room.\n"
+        # else:
+            # llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
 
         remember = ""
         if not self.open_set_rooms:

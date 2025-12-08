@@ -112,29 +112,39 @@ class PyAstarHelper:
         
         if add_wall_avoidance_cost:
             # Add graduated wall avoidance cost - higher cost closer to walls
-            # First ring: very close to obstacles (within inflation + 1 cell)
+            # This creates a strong preference for paths that stay away from obstacles
+            
+            # First ring: very close to obstacles (within inflation + 2 cells) - VERY HIGH COST
             avoid_wall_weights_close = PyAstarHelper.get_inflated_map_weights(
                 binary_occupancy_map,
-                inflation_radius_m=inflation_radius_m + resolution,
+                inflation_radius_m=inflation_radius_m + 2 * resolution,
                 resolution=resolution
             )
-            weights[avoid_wall_weights_close > 0] += 10  # High cost very close to walls
+            weights[avoid_wall_weights_close > 0] += 50  # Very high cost - strongly avoid
             
-            # Second ring: moderate distance (within inflation + 3 cells)
+            # Second ring: close to obstacles (within inflation + 4 cells)
+            avoid_wall_weights_near = PyAstarHelper.get_inflated_map_weights(
+                binary_occupancy_map,
+                inflation_radius_m=inflation_radius_m + 4 * resolution,
+                resolution=resolution
+            )
+            weights[avoid_wall_weights_near > 0] += 20  # High cost near walls
+            
+            # Third ring: moderate distance (within inflation + 6 cells)
             avoid_wall_weights_medium = PyAstarHelper.get_inflated_map_weights(
                 binary_occupancy_map,
-                inflation_radius_m=inflation_radius_m + 3 * resolution,
+                inflation_radius_m=inflation_radius_m + 6 * resolution,
                 resolution=resolution
             )
-            weights[avoid_wall_weights_medium > 0] += 3  # Medium cost near walls
+            weights[avoid_wall_weights_medium > 0] += 8  # Medium cost
             
-            # Third ring: further away (within inflation + 5 cells) - slight preference for open space
+            # Fourth ring: further away (within inflation + 10 cells) - prefer open space
             avoid_wall_weights_far = PyAstarHelper.get_inflated_map_weights(
                 binary_occupancy_map,
-                inflation_radius_m=inflation_radius_m + 5 * resolution,
+                inflation_radius_m=inflation_radius_m + 10 * resolution,
                 resolution=resolution
             )
-            weights[avoid_wall_weights_far > 0] += 1  # Small cost to prefer open areas
+            weights[avoid_wall_weights_far > 0] += 2  # Small cost to prefer open areas
             
         weights += 1
         return weights
@@ -619,16 +629,20 @@ def drive_to_target_position(env,
             if debug:
                 print(f"DEBUG Nav: Goal reached at dist={current_dist:.3f}m")
             break
-            
-        # Replan
-        waypoints, costs = plan_waypoints(
-            env=env,
-            target_pos_world=target_pos_world,
-            inflation_radius_m=inflation_radius_m,
-            filter_collision_points=True,
-            add_wall_avoidance_cost=True
-        )
-        replans += 1
+        
+        # Only replan if we're running low on waypoints (less than 3 remaining)
+        # This avoids expensive replanning after every single move
+        if len(waypoints) <= 3:
+            waypoints, costs = plan_waypoints(
+                env=env,
+                target_pos_world=target_pos_world,
+                inflation_radius_m=inflation_radius_m,
+                filter_collision_points=True,
+                add_wall_avoidance_cost=True
+            )
+            replans += 1
+            if debug:
+                print(f"DEBUG Nav: Replanned path, now {len(waypoints)} waypoints")
         
         # Check if we're stuck
         new_pos = get_robot_pos_2d(env)

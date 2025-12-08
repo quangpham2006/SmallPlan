@@ -38,10 +38,11 @@ You observe {NUM_ROOMS} rooms, they contain the following objects:
 
 {REQUESTS}
 
-Output Response Format:
- A list with bullet points of the form
+You return a list with bullet points following this output response format:
  - room-X: room type
+
 {REMEMBER}
+DO NOT include any other text in your response.
 '''
 RETRIAL_PROMPT = "The last action failed. Please try another command based on the previous message feedback. Note that you must have 'command:' before action."
 # RETRIAL_PROMPT = "The last action {ACTION}({ARGS}) failed. The reason of failure is {LAST_ENV_FEEDBACK}. Follow the analysis, reasoning and response also."

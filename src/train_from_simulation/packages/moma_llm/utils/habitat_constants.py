@@ -15,26 +15,54 @@ PACKAGE_DIR = Path(__file__).parent.parent
 # Adjust based on the scenes you have downloaded
 # ============================================================================
 
-# HM3D Minival scenes (downloaded to data/scene_datasets/hm3d/minival/)
+# HM3D Val scenes (downloaded to data/scene_datasets/hm3d/val/)
+# NOTE: Only scenes listed in hm3d_annotated_val_basis.scene_dataset_config.json have semantic annotations!
+# Scenes without annotations will have empty objects and fail to create valid tasks.
 HM3D_TRAINING_SCENES = [
-    "00800-TEEsavR23oF",
-    "00801-HaxA7YrQdEC", 
-    "00802-wcojb4TFT35",
-    "00803-k1cupFYWXJ6",
-    "00804-BHXhpBwSMLh",
-    "00805-SUHsP6z2gcJ",
-    "00806-tQ5s4ShP627",
-    "00807-rsggHU7g7dh",
+    "00800-TEEsavR23oF",  # Has semantic annotations
+    "00802-wcojb4TFT35",  # Has semantic annotations
+    "00803-k1cupFYWXJ6",  # Has semantic annotations
+    "00808-y9hTuugGdiq",  # Has semantic annotations
+    "00810-CrMo8WxCyVb",  # Has semantic annotations
+    "00813-svBbv1Pavdk",  # Has semantic annotations
+    "00814-p53SfW6mjZe",  # Has semantic annotations
+    "00815-h1zeeAwLh9Z",  # Has semantic annotations
+    "00820-mL8ThkuaVTM",  # Has semantic annotations
+    "00821-eF36g7L6Z9M",  # Has semantic annotations
+    "00823-7MXmsvcQjpJ",  # Has semantic annotations
+    "00824-Dd4bFSTQ8gi",  # Has semantic annotations
+    "00827-BAbdmeyTvMZ",  # Has semantic annotations
+    "00829-QaLdnwvtxbs",  # Has semantic annotations
+    "00831-yr17PDCnDDW",  # Has semantic annotations
+    "00832-qyAac8rV8Zk",  # Has semantic annotations
+    "00835-q3zU7Yy5E5s",  # Has semantic annotations
+    "00839-zt1RVoi7PcG",  # Has semantic annotations
+    "00843-DYehNKdT76V",  # Has semantic annotations
+    "00844-q5QZSEeHe5g",  # Has semantic annotations
+    "00847-bCPU9suPUw9",  # Has semantic annotations
+    "00848-ziup5kvtCCR",  # Has semantic annotations
+    "00849-a8BtkwhxdRV",  # Has semantic annotations
+    "00853-5cdEh9F2hJL",  # Has semantic annotations
+    "00861-GLAQ4DNUx5U",  # Has semantic annotations
+    "00862-LT9Jq6dN3Ea",  # Has semantic annotations
+    "00869-MHPLjHsuG27",  # Has semantic annotations
+    "00871-VBzV5z6i1WS",  # Has semantic annotations
+    "00873-bxsVRursffK",  # Has semantic annotations
 ]
 
 HM3D_TEST_SCENES = [
-    "00808-y9hTuugGdiq",
-    "00809-Qpor2mEya8F",
+    "00876-mv2HUxq3B53",  # Has semantic annotations
+    "00877-4ok3usBNeis",  # Has semantic annotations
+    "00878-XB4GS9ShBRE",  # Has semantic annotations
+    "00880-Nfvxx8J5NCo",  # Has semantic annotations
+    "00890-6s7QHgap2fW",  # Has semantic annotations
+    "00891-cvZr5TUy5C5",  # Has semantic annotations
+    "00894-HY1NcmCgn3n",  # Has semantic annotations
 ]
 
 # HM3D data path configuration
 HM3D_DATA_PATH = "/media/khointn/SmallPlan/data"
-HM3D_SPLIT = "minival"  # minival, train, or val
+HM3D_SPLIT = "val"  # minival, train, or val
 
 # ============================================================================
 # MP3D Scene IDs (Matterport3D)

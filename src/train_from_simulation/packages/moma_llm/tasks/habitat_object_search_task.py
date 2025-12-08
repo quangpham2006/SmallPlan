@@ -18,7 +18,8 @@ except ImportError:
 from moma_llm.llm.habitat_llm import LLM_hugging, object_states
 from moma_llm.navigation.habitat_navigation import (
     PyAstarHelper, 
-    get_circular_kernel
+    get_circular_kernel,
+    find_floor_idx
 )
 from moma_llm.utils.habitat_constants import OCCUPANCY
 
@@ -175,7 +176,13 @@ class HabitatObjectSearchTask:
         target_obj_category = env.np_random.choice(sorted(valid_object_categories))
         
         if self.scene and hasattr(self.scene, 'objects_by_category'):
-            possible_targets = self.scene.objects_by_category.get(target_obj_category, [])
+            all_targets = self.scene.objects_by_category.get(target_obj_category, [])
+            # Filter targets to only include those on the same floor as the agent
+            # This ensures the target is reachable (since navigation is floor-constrained)
+            possible_targets = [
+                o for o in all_targets 
+                if find_floor_idx(env, o.get_position()[2]) == self.floor_num
+            ]
         else:
             possible_targets = []
         
@@ -310,8 +317,10 @@ class HabitatObjectSearchTask:
         # Check if target category has been seen
         if hasattr(env, 'slam') and hasattr(env.slam, 'seen_instances'):
             for instance_id in env.slam.seen_instances:
-                if self.scene and hasattr(self.scene, 'objects_by_id'):
-                    obj = self.scene.objects_by_id.get(instance_id, None)
+                # Use get_object_by_id() to check both obj_id and semantic_id
+                # (seen_instances uses semantic_id from instance segmentation sensor)
+                if self.scene and hasattr(self.scene, 'get_object_by_id'):
+                    obj = self.scene.get_object_by_id(instance_id)
                     if obj is not None and hasattr(obj, 'category'):
                         if obj.category == self.target_category:
                             if hasattr(env, 'episode_info'):

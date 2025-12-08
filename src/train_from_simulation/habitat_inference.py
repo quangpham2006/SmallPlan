@@ -1,9 +1,13 @@
 # Habitat Inference Script for SmallPlan
 # Replaces iGibson-based inference.py for Habitat-Lab/Habitat-Sim
 
+# Set environment variables to suppress Habitat-Sim C++ warnings before imports
+import os
+os.environ['MAGNUM_LOG'] = 'quiet'
+os.environ['HABITAT_SIM_LOG'] = 'quiet'
+
 import argparse
 import atexit
-import os
 import signal
 import shutil
 import sys
@@ -25,6 +29,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Suppress Habitat-Sim warnings about missing scene instance files
+habitat_sim_logger = logging.getLogger("habitat_sim")
+habitat_sim_logger.setLevel(logging.ERROR)
+
+# Also suppress habitat logging warnings
+habitat_logger = logging.getLogger("habitat")
+habitat_logger.setLevel(logging.ERROR)
+
 # Global state for cleanup on interrupt
 _current_env = None
 _current_video_path = None
@@ -32,7 +44,7 @@ _video_saved = False
 
 
 def _save_video_on_exit():
-    """Save video when script exits (cleanup handler)."""
+    """Save video when script exits (cleanup handler) - saves to 'error' subdirectory."""
     global _current_env, _current_video_path, _video_saved
     
     if _video_saved:
@@ -40,13 +52,20 @@ def _save_video_on_exit():
         
     if _current_env is not None and _current_video_path is not None:
         try:
-            logger.info(f"Saving video on exit to {_current_video_path}")
+            # On interrupt/error, save to "error" subdirectory
+            video_dir = os.path.dirname(_current_video_path)
+            video_filename = os.path.basename(_current_video_path)
+            error_dir = os.path.join(video_dir, "error")
+            os.makedirs(error_dir, exist_ok=True)
+            error_video_path = os.path.join(error_dir, video_filename)
+            
+            logger.info(f"Saving video on exit (interrupted/error) to {error_video_path}")
             if hasattr(_current_env, 'env') and hasattr(_current_env.env, 'save_video'):
-                _current_env.env.save_video(_current_video_path, fps=10)
+                _current_env.env.save_video(error_video_path, fps=10)
             elif hasattr(_current_env, 'save_video'):
-                _current_env.save_video(_current_video_path, fps=10)
+                _current_env.save_video(error_video_path, fps=10)
             _video_saved = True
-            logger.info("Video saved successfully on exit")
+            logger.info("Video saved successfully on exit to error directory")
         except Exception as e:
             logger.error(f"Failed to save video on exit: {e}")
 
@@ -64,11 +83,6 @@ signal.signal(signal.SIGTERM, _signal_handler)
 atexit.register(_save_video_on_exit)
 
 # Import Habitat-compatible modules
-from src.train_from_simulation.packages.moma_llm.llm.habitat_llm import (
-    LLM_hugging,
-    Conversation,
-    object_states
-)
 from src.train_from_simulation.packages.moma_llm.env.habitat_env import (
     OurHabitatEnv,
     create_habitat_env
@@ -208,6 +222,10 @@ def evaluate_scene(config_file: str,
     """
     global _current_env, _current_video_path, _video_saved
     
+    # DEBUG: Log config value at the start of evaluate_scene
+    logger.info(f"evaluate_scene called for {scene_id}")
+    logger.info(f"  cfg['open_set_room_categories'] = {cfg.get('open_set_room_categories', 'KEY NOT FOUND')}")
+    
     if save_video:
         os.makedirs(video_dir, exist_ok=True)
     
@@ -254,15 +272,21 @@ def evaluate_scene(config_file: str,
             
         high_level_env.visualize(obs)
         
-        # Save video if requested
+        # Save video if requested - to "success" or "failed" subdirectory based on outcome
         if save_video and hasattr(high_level_env.env, 'save_video'):
-            # Use the same timestamp from _current_video_path to ensure consistency
-            video_path = _current_video_path if _current_video_path else os.path.join(
-                video_dir, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{scene_id}_episode_{i}_tot_{tot_ep}.mp4"
-            )
+            # Determine subdirectory based on task success
+            outcome_subdir = "success" if task_success else "failed"
+            outcome_dir = os.path.join(video_dir, outcome_subdir)
+            os.makedirs(outcome_dir, exist_ok=True)
+            
+            # Build video path with outcome subdirectory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            video_filename = f"{timestamp}_{scene_id}_episode_{i}_tot_{tot_ep}.mp4"
+            video_path = os.path.join(outcome_dir, video_filename)
+            
             high_level_env.env.save_video(video_path, fps=10)
             _video_saved = True  # Mark as saved so signal handler doesn't save again
-            print(f"Saved episode video to {video_path}")
+            print(f"Saved episode video to {video_path} ({outcome_subdir})")
         
         if "failure_reason" in episode_info:
             high_level_env.env.f.suptitle(
@@ -381,6 +405,10 @@ def main():
     np.set_printoptions(precision=3, suppress=True)
     
     config_file, cfg, wandb_cfg, slm_training_cfg = setup_cfgs()
+    
+    # DEBUG: Print the actual config value to verify it's being loaded correctly
+    logger.info(f"Config loaded from {config_file}")
+    logger.info(f"open_set_room_categories from config: {cfg.get('open_set_room_categories', 'KEY NOT FOUND')}")
     
     # Add verbose flag to config so it's accessible throughout the codebase
     cfg["verbose"] = verbose

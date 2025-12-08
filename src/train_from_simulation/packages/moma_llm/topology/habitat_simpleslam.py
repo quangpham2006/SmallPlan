@@ -127,6 +127,7 @@ class HabitatSimpleSlam:
         # Get unique instances and their counts
         unique_instances, counts = np.unique(instance_seg, return_counts=True)
         
+        newly_detected = 0
         for instance_id, count in zip(unique_instances, counts):
             if instance_id == 0:  # Skip background
                 continue
@@ -138,7 +139,17 @@ class HabitatSimpleSlam:
                 
                 # Update if closer than previous viewpoint
                 if self.instance_viewpoints.get(instance_id, (None, np.inf))[1] > min_dist:
+                    was_new = instance_id not in self.instance_viewpoints
                     self.instance_viewpoints[instance_id] = (viewpoint_pos_world.copy(), min_dist)
+                    if was_new:
+                        newly_detected += 1
+                        if self.verbose:
+                            obj = scene.get_object_by_id(instance_id)
+                            obj_name = getattr(obj, 'category', 'unknown') if obj else 'unknown'
+                            print(f"  New instance detected: {instance_id} ({obj_name}), {count} points, dist={min_dist:.2f}m")
+        
+        if self.verbose and newly_detected > 0:
+            print(f"Total instances tracked: {len(self.instance_viewpoints)} (+{newly_detected} new)")
 
     @property
     def clipping_range(self) -> Tuple[int, int]:

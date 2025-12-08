@@ -101,7 +101,7 @@ class HabitatSceneWrapper:
         self.category_ids: set = set()
         
         # Floor information
-        self.floor_heights = [0.0]  # Default single floor
+        self.floor_heights = [0.0]  # Default single floor, will be updated
         self.floor_map = []
         self.floor_graph = []
         self.trav_map_resolution = 0.05
@@ -113,6 +113,7 @@ class HabitatSceneWrapper:
         self.room_ins_map = None
         
         self._build_scene_objects()
+        self._detect_floor_heights()
         
     def _build_scene_objects(self):
         """Build object dictionaries from Habitat scene."""
@@ -123,8 +124,23 @@ class HabitatSceneWrapper:
         if scene is None:
             log.warning("No semantic scene available")
             return
+        
+        # Debug: Check what's in the semantic scene
+        objects_list = list(scene.objects) if scene.objects else []
+        log.info(f"Semantic scene has {len(objects_list)} objects")
+        
+        if len(objects_list) == 0:
+            # Try alternative: use scene.regions or scene.levels
+            if hasattr(scene, 'levels') and scene.levels:
+                log.info(f"Scene has {len(scene.levels)} levels")
+                for level in scene.levels:
+                    if hasattr(level, 'regions'):
+                        for region in level.regions:
+                            if hasattr(region, 'objects'):
+                                objects_list.extend(region.objects)
+                log.info(f"Found {len(objects_list)} objects from levels/regions")
             
-        for obj in scene.objects:
+        for obj in objects_list:
             if obj is None:
                 continue
                 
@@ -164,6 +180,66 @@ class HabitatSceneWrapper:
                 self.objects_by_category[category] = []
             self.objects_by_category[category].append(wrapper)
             self.category_ids.add(category)
+    
+    def _detect_floor_heights(self):
+        """
+        Detect floor heights from scene objects.
+        Groups objects by vertical position to identify distinct floors.
+        """
+        if not HABITAT_SIM_AVAILABLE:
+            return
+            
+        # Collect all object heights (Y coordinates in Habitat)
+        all_heights = []
+        for obj_list in self.objects_by_category.values():
+            for obj in obj_list:
+                # Use Y coordinate (vertical in Habitat)
+                # HabitatObjectWrapper uses get_position() method
+                all_heights.append(obj.get_position()[1])
+        
+        if not all_heights:
+            log.warning("No objects found to detect floor heights")
+            return
+        
+        all_heights = np.array(all_heights)
+        
+        # Use clustering to find distinct floor levels
+        # Group heights within 2.5m (typical floor-to-floor height) as same floor
+        floor_separation_threshold = 2.5
+        
+        # Sort heights
+        sorted_heights = np.sort(all_heights)
+        
+        # Find gaps larger than threshold
+        height_diffs = np.diff(sorted_heights)
+        floor_boundaries = np.where(height_diffs > floor_separation_threshold)[0]
+        
+        # Extract floor heights (use minimum height in each cluster)
+        floor_heights = [sorted_heights[0]]  # First floor
+        
+        for boundary_idx in floor_boundaries:
+            # Next floor starts after the boundary
+            next_floor_start = sorted_heights[boundary_idx + 1]
+            floor_heights.append(next_floor_start)
+        
+        # Convert to representative heights (use lower bound of each floor)
+        # For better matching, use the median of the bottom 10% of heights in each cluster
+        refined_floor_heights = []
+        
+        prev_boundary = 0
+        boundaries = list(floor_boundaries) + [len(sorted_heights) - 1]
+        
+        for boundary_idx in boundaries:
+            cluster_heights = sorted_heights[prev_boundary:boundary_idx + 1]
+            # Use 10th percentile as floor height (robust to outliers)
+            floor_height = np.percentile(cluster_heights, 10)
+            refined_floor_heights.append(floor_height)
+            prev_boundary = boundary_idx + 1
+        
+        self.floor_heights = refined_floor_heights
+        
+        log.info(f"Detected {len(self.floor_heights)} floor(s) with heights: {[f'{h:.2f}' for h in self.floor_heights]}")
+            
             
     def get_random_floor(self) -> int:
         return 0
@@ -350,14 +426,14 @@ class OurHabitatEnv:
             "grid_size_meter": 30,
             "depth_high": 5.0,
             "depth_low": 0.0,
-            "min_points_for_detection": 50,
+            "min_points_for_detection": 10,
             "image_width": 256,
             "image_height": 256,
             "vertical_fov": 90,
             "max_step": 10000000,
             "max_high_level_steps": 50,
             "control_freq": 10.0,
-            "navigation_inflation_radius": 0.25,  # Robot clearance from obstacles (meters)
+            "navigation_inflation_radius": 0.4,  # Robot clearance from obstacles (meters) - larger value = more space from walls
             "magic_open_cost": 30,
             "consider_open_actions": True,
             "use_viewpoint_assignment": True,

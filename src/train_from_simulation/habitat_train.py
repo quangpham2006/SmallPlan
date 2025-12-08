@@ -89,12 +89,22 @@ def create_env(cfg: Dict,
     else:
         raise ValueError(f"Unknown agent type: {agent}")
     
+    open_set_rooms_value = cfg.get("open_set_room_categories", True)
+    logger.info(f"Creating LLM with open_set_rooms={open_set_rooms_value} (from config 'open_set_room_categories')")
+    if open_set_rooms_value:
+        logger.info("  → Room classification will allow free-form room categories (not restricted to predefined list)")
+    else:
+        logger.info(f"  → Room classification will be restricted to predefined categories: {POSSIBLE_ROOMS}")
+    
     llm = LLM_hugging(
         debug=True,
         room_classification_model="gpt-4o",
-        open_set_rooms=cfg.get("open_set_room_categories", True),
+        open_set_rooms=open_set_rooms_value,
         slm_api_url=slm_api_url
     )
+    
+    # Verify the LLM actually has the correct value set
+    logger.info(f"LLM created with llm.open_set_rooms = {llm.open_set_rooms}")
     
     low_level_env = create_habitat_env(
         config_file=config_file,

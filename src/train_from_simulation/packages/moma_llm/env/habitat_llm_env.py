@@ -160,7 +160,7 @@ class HabitatHighLevelEnv(gymnasium.Wrapper):
         success = drive_to_target_position(
             env=self.env,
             target_pos_world=target_pos_world,
-            inflation_radius_m=self.env.config.get("navigation_inflation_radius", 0.1),
+            inflation_radius_m=self.env.config.get("navigation_inflation_radius", 0.4),
             success_thres_dist=success_thres_dist,
             face_target=face_target,
             early_termination_dist=early_termination_dist,
@@ -169,7 +169,7 @@ class HabitatHighLevelEnv(gymnasium.Wrapper):
         return success
 
     def _find_closest_point(self, points: List, euclidean_heuristic: bool = True):
-        """Find closest navigable point."""
+        """Find closest navigable point. Optimized to first filter by Euclidean distance."""
         def _to_navpoint(point):
             if isinstance(point, dict):
                 p = self.env.slam.voxel2world(point["closest_vor_node"][:2])
@@ -179,16 +179,35 @@ class HabitatHighLevelEnv(gymnasium.Wrapper):
                 euclidean_dist = 0
             return p, euclidean_dist
         
+        # Optimization: If many points, first filter by Euclidean distance
+        # to avoid expensive path planning for all points
+        robot_pos = self.env.robots[0].get_position()[:2]
+        max_candidates = 3  # Only plan paths to the 3 closest points by Euclidean distance
+        
+        if len(points) > max_candidates:
+            # Calculate Euclidean distances to all points
+            euclidean_dists = []
+            for point in points:
+                p, _ = _to_navpoint(point)
+                dist = np.linalg.norm(np.array(p) - robot_pos)
+                euclidean_dists.append(dist)
+            
+            # Get indices of closest points
+            sorted_indices = np.argsort(euclidean_dists)[:max_candidates]
+            candidate_points = [points[i] for i in sorted_indices]
+        else:
+            candidate_points = points
+        
         nav_points = []
         costs = []
         paths = []
         
-        for point in points:
+        for point in candidate_points:
             p, euclidean_dist = _to_navpoint(point)
             path, cost = plan_waypoints(
                 env=self.env,
                 target_pos_world=p,
-                inflation_radius_m=self.env.config.get("navigation_inflation_radius", 0.1),
+                inflation_radius_m=self.env.config.get("navigation_inflation_radius", 0.4),
                 add_wall_avoidance_cost=False
             )
             nav_points.append(p)
@@ -198,7 +217,7 @@ class HabitatHighLevelEnv(gymnasium.Wrapper):
                 mask = (cost[-last_cells:] == PyAstarHelper.UNEXPLORED_COST + 1)
             else:
                 last_cells = int(np.ceil(
-                    self.env.config.get("navigation_inflation_radius", 0.1) / self.env.slam.voxel_size
+                    self.env.config.get("navigation_inflation_radius", 0.4) / self.env.slam.voxel_size
                 ))
                 mask = (cost[-last_cells:] >= PyAstarHelper.OCCUPIED_COST)
             cost[-last_cells:][mask] = 1
