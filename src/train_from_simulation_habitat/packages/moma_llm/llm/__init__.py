@@ -22,8 +22,19 @@ except ImportError:
     object_states = None
     inflect_engine = None
 
+# Import Storyteller LLM for multi-LLM system
+try:
+    from .storyteller_llm import StorytellerLLM, ActionRecord, StorytellerContext
+    STORYTELLER_AVAILABLE = True
+except ImportError:
+    STORYTELLER_AVAILABLE = False
+    StorytellerLLM = None
+    ActionRecord = None
+    StorytellerContext = None
+
 __all__ = [
     "HABITAT_LLM_AVAILABLE",
+    "STORYTELLER_AVAILABLE",
 ]
 
 if HABITAT_LLM_AVAILABLE:
@@ -33,4 +44,11 @@ if HABITAT_LLM_AVAILABLE:
         "Conversation",
         "object_states",
         "inflect_engine"
+    ])
+
+if STORYTELLER_AVAILABLE:
+    __all__.extend([
+        "StorytellerLLM",
+        "ActionRecord",
+        "StorytellerContext"
     ])

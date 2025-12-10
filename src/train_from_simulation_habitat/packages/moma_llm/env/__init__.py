@@ -13,6 +13,18 @@ except ImportError:
     HabitatRandomBaseline = None
     HABITAT_AVAILABLE = False
 
+# Import Multi-LLM environment
+try:
+    from .habitat_multi_llm_env import HabitatMultiLLMEnv
+    MULTI_LLM_AVAILABLE = True
+except ImportError:
+    HabitatMultiLLMEnv = None
+    MULTI_LLM_AVAILABLE = False
+
+# Import prompt modules
+from . import prompts_v3
+from . import prompts_v4
+
 # Provide default GreedyBaseline and RandomBaseline
 if HABITAT_AVAILABLE:
     GreedyBaseline = HabitatGreedyBaseline
@@ -25,6 +37,7 @@ __all__ = [
     "GreedyBaseline",
     "RandomBaseline",
     "HABITAT_AVAILABLE",
+    "MULTI_LLM_AVAILABLE",
 ]
 
 if HABITAT_AVAILABLE:
@@ -36,3 +49,14 @@ if HABITAT_AVAILABLE:
         "HabitatGreedyBaseline",
         "HabitatRandomBaseline"
     ])
+
+if MULTI_LLM_AVAILABLE:
+    __all__.extend([
+        "HabitatMultiLLMEnv"
+    ])
+
+# Always export prompt modules
+__all__.extend([
+    "prompts_v3",
+    "prompts_v4"
+])

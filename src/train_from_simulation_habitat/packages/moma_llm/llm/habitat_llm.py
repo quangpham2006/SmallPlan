@@ -88,6 +88,16 @@ class object_states:
 client = OpenAI()
 inflect_engine = inflect.engine()
 
+# Objects to filter out from prompts - these are structural/irrelevant for object finding tasks
+FILTERED_OBJECTS = {
+    # Structural elements
+    "floor", "wall", "ceiling", "pillar", "stair", "balustrade",
+    # Unknown/unrecognized objects
+    "unknown",
+    # Architectural features that are rarely targets
+    "door-frame", "window-frame", "floor-mat",
+}
+
 
 def pprint_color(obj, style="staroffice", width=200):
     """Pretty print with syntax highlighting."""
@@ -178,7 +188,7 @@ class LLM_hugging:
                  debug: bool = False,
                  slm_api_url: str = None,
                  use_openai: bool = True,  # TEMPORARY: Switch to use OpenAI
-                 openai_model: str = "gpt-4o") -> None:  # TEMPORARY: OpenAI model
+                 openai_model: str = "gpt-4o-mini") -> None:  # TEMPORARY: OpenAI model
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.room_classification_model = room_classification_model
         self.temperature = temperature
@@ -372,7 +382,8 @@ class LLM_hugging:
     def create_room_object_dict(graph: nx.DiGraph,
                                 open_door_inclusion: str = "as_object",
                                 room_classification: Optional[Dict] = None,
-                                include_explored: bool = False) -> Dict[str, List[str]]:
+                                include_explored: bool = False,
+                                filter_structural: bool = True) -> Dict[str, List[str]]:
         """
         Create dictionary mapping rooms to their contained objects.
         
@@ -381,6 +392,8 @@ class LLM_hugging:
             open_door_inclusion: How to handle open doors ("as_object", "as_edge", "ignore")
             room_classification: Optional room classification mapping
             include_explored: Whether to include exploration status
+            filter_structural: Whether to filter out structural/irrelevant objects 
+                             (floors, walls, ceilings, unknowns, etc.)
             
         Returns:
             Dictionary mapping room names to object lists
@@ -394,6 +407,13 @@ class LLM_hugging:
                 LLM_hugging.to_human_readable_object_name(o, states=graph.nodes[o].get("states"))
                 for o in objects
             ]
+            
+            # Filter out structural/irrelevant objects if enabled
+            if filter_structural:
+                objects_readable = [
+                    obj for obj in objects_readable 
+                    if not any(filtered in obj.lower() for filtered in FILTERED_OBJECTS)
+                ]
             
             # Handle open doors
             open_doors_data = list(graph.nodes.get(room, {}).get("open_doors", []))
@@ -433,11 +453,20 @@ class LLM_hugging:
             
             # Count occurrences and format
             occurrences = Counter(objects_readable)
-            counted_objects = [
-                f"{v} {inflect_engine.plural(k) if inflect_engine.plural(k) else (k + 's')}"
-                if (v > 1) else k
-                for k, v in occurrences.items()
-            ]
+            counted_objects = []
+            for k, v in occurrences.items():
+                if v > 1:
+                    # Check if word is already plural using singular_noun
+                    # singular_noun returns the singular form if word is plural, False otherwise
+                    if inflect_engine.singular_noun(k):
+                        # Word is already plural, use as-is
+                        plural_form = k
+                    else:
+                        # Word is singular, pluralize it
+                        plural_form = inflect_engine.plural(k)
+                    counted_objects.append(f"{v} {plural_form}")
+                else:
+                    counted_objects.append(k)
             room_dict[room] = counted_objects
             
         return room_dict
@@ -511,11 +540,11 @@ class LLM_hugging:
             print("=" * 50 + "\n")
 
         llm_request = ""
-        # if not self.open_set_rooms:
-        llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
-        llm_request += "If you are unsure or the room is empty, classify them as other room.\n"
+        if not self.open_set_rooms:
+            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
+        llm_request += "If you are very unsure or the room is empty, classify them as other room.\n"
         # else:
-            # llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
+        #     llm_request += "Please classify the rooms. If you are very unsure or the room is empty, classify them as other room.\n"
 
         remember = ""
         if not self.open_set_rooms:
@@ -629,11 +658,9 @@ class LLM:
             print("=" * 50 + "\n")
 
         llm_request = ""
-        #  if not self.open_set_rooms:
-        llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
-        llm_request += "If you are unsure, classify them as other room.\n"
-        # else:
-            # llm_request += "Please classify the rooms. If you are unsure, classify them as other room.\n"
+        if not self.open_set_rooms:
+            llm_request += f"Please classify the rooms into the following categories: {', '.join(POSSIBLE_ROOMS)}. "
+        llm_request += "If you are very unsure or the room is empty, classify them as other room.\n"
 
         remember = ""
         if not self.open_set_rooms:

@@ -354,13 +354,17 @@ def set_agent_state(env, position: np.ndarray, yaw: float, z_offset: float = 0.0
         if not np.isnan(snapped[0]):  # Valid snap
             # Check if snap moved us too far (indicates target not on navmesh)
             snap_distance_2d = np.linalg.norm(np.array([snapped[0], snapped[2]]) - position)
-            if snap_distance_2d > 0.5:  # Snapped more than 0.5m away
+            # Increased tolerance from 0.5m to 1.0m to handle A* waypoints that don't perfectly align with navmesh
+            if snap_distance_2d > 1.0:
                 if debug:
                     print(f"DEBUG set_agent_state: Snap too far ({snap_distance_2d:.3f}m), target not on navmesh")
                 return False  # Can't navigate to this point
             else:
+                # Use the snapped position which is guaranteed to be on navmesh
                 new_position_3d = snapped
                 new_position_3d[1] += z_offset
+                if debug and snap_distance_2d > 0.3:
+                    print(f"DEBUG set_agent_state: Snapped {snap_distance_2d:.3f}m to navigable point")
         else:
             if debug:
                 print(f"DEBUG set_agent_state: Could not snap to navmesh")
@@ -564,8 +568,19 @@ def drive_to_target_position(env,
     max_failed_moves = 3  # Try multiple waypoints before giving up on this path
     
     loop_iteration = 0
+    max_loop_iterations = 1000  # Safety limit to prevent infinite loops
     while len(waypoints) > 1:
         loop_iteration += 1
+        
+        # Safety check: prevent infinite loops
+        if loop_iteration > max_loop_iterations:
+            termination_reason = "max_iterations"
+            if debug:
+                print(f"DEBUG Nav: Max loop iterations ({max_loop_iterations}) exceeded, terminating")
+            else:
+                print(f"Navigation: Max iterations exceeded, terminating navigation")
+            break
+        
         current_pos = get_robot_pos_2d(env)
         next_wp, next_wp_cost = waypoints[1], costs[1]
         remaining_waypoints = len(waypoints)
@@ -604,9 +619,22 @@ def drive_to_target_position(env,
                 # Try skipping to next waypoint, or replan if too many failures
                 if consecutive_failed_moves >= max_failed_moves:
                     if debug:
-                        print(f"DEBUG Nav: Too many failed moves, forcing replan...")
+                        print(f"DEBUG Nav: Too many failed moves, trying navmesh path instead...")
                     consecutive_failed_moves = 0
-                    break  # Force replan
+                    
+                    # When A* waypoints fail, switch to navmesh-only navigation
+                    navmesh_path = get_habitat_navmesh_path(env, target_pos_world, debug=debug)
+                    if navmesh_path is not None and len(navmesh_path) > 1:
+                        waypoints = navmesh_path
+                        costs = np.ones(len(waypoints))
+                        use_navmesh_path = True
+                        if debug:
+                            print(f"DEBUG Nav: Switched to navmesh path ({len(waypoints)} waypoints)")
+                        continue  # Try with navmesh path
+                    else:
+                        if debug:
+                            print(f"DEBUG Nav: Navmesh path also failed, breaking")
+                        break  # Give up
             else:
                 consecutive_failed_moves = 0  # Reset on successful move
         else:
@@ -633,16 +661,33 @@ def drive_to_target_position(env,
         # Only replan if we're running low on waypoints (less than 3 remaining)
         # This avoids expensive replanning after every single move
         if len(waypoints) <= 3:
-            waypoints, costs = plan_waypoints(
-                env=env,
-                target_pos_world=target_pos_world,
-                inflation_radius_m=inflation_radius_m,
-                filter_collision_points=True,
-                add_wall_avoidance_cost=True
-            )
+            # Prefer navmesh path if we're already using it or if it's available
+            if use_navmesh_path:
+                navmesh_path = get_habitat_navmesh_path(env, target_pos_world, debug=debug)
+                if navmesh_path is not None and len(navmesh_path) > 1:
+                    waypoints = navmesh_path
+                    costs = np.ones(len(waypoints))
+                else:
+                    # Fallback to A*
+                    waypoints, costs = plan_waypoints(
+                        env=env,
+                        target_pos_world=target_pos_world,
+                        inflation_radius_m=inflation_radius_m,
+                        filter_collision_points=True,
+                        add_wall_avoidance_cost=True
+                    )
+                    use_navmesh_path = False
+            else:
+                waypoints, costs = plan_waypoints(
+                    env=env,
+                    target_pos_world=target_pos_world,
+                    inflation_radius_m=inflation_radius_m,
+                    filter_collision_points=True,
+                    add_wall_avoidance_cost=True
+                )
             replans += 1
             if debug:
-                print(f"DEBUG Nav: Replanned path, now {len(waypoints)} waypoints")
+                print(f"DEBUG Nav: Replanned path, now {len(waypoints)} waypoints (navmesh={use_navmesh_path})")
         
         # Check if we're stuck
         new_pos = get_robot_pos_2d(env)

@@ -454,9 +454,13 @@ def detect_rooms(scene,
                  thresh: float, 
                  voxel_size: float, 
                  obj_to_neglect: List[str], 
-                 opened_windows: set) -> Tuple[nx.Graph, np.ndarray, np.ndarray]:
+                 opened_windows: set,
+                 opened_doors: set = None) -> Tuple[nx.Graph, np.ndarray, np.ndarray]:
     """
     Detect rooms by analyzing door positions and graph structure.
+    
+    Cuts the voronoi graph at CLOSED door locations to separate rooms.
+    Open doors are ignored so that connected spaces remain connected.
     
     Args:
         scene: Scene wrapper
@@ -468,10 +472,14 @@ def detect_rooms(scene,
         voxel_size: Voxel size
         obj_to_neglect: Objects to ignore
         opened_windows: Opened window names
+        opened_doors: Set of opened door names (these won't cause graph cuts)
         
     Returns:
         Tuple of (separated graph, door probability map, door positions)
     """
+    if opened_doors is None:
+        opened_doors = set()
+        
     graph = copy.deepcopy(graph)
     boundary_sdf = compute_sdf(obstacle_map, distance_scale=sdf_scale)
 
@@ -483,12 +491,19 @@ def detect_rooms(scene,
     
     door_positions = []
     
-    # Find all doors
+    # Find CLOSED doors only - open doors should not separate rooms
     for instance_id in slam.seen_instances:
         body_property = get_body_properties(scene, instance_id, obj_to_neglect, opened_windows)
         if body_property is not None:
             if body_property["semantic_class_name"] == "door":
-                door_positions.append(slam.world2voxel(np.array(body_property["pos"][:2])))
+                door_name = body_property.get("name", "")
+                # Only cut graph at CLOSED doors
+                if door_name not in opened_doors:
+                    # Habitat uses Y-up coordinate system: position is (X, Y, Z)
+                    # For 2D map, we need (X, Z) which is the horizontal plane
+                    pos = body_property["pos"]
+                    pos_2d = np.array([pos[0], pos[2]])  # X, Z
+                    door_positions.append(slam.world2voxel(pos_2d))
     
     if len(door_positions) > 0:
         # Kernel density estimation around doors

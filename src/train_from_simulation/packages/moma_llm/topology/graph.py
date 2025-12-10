@@ -11,11 +11,7 @@ import networkx as nx
 import numpy as np
 from scipy.spatial import distance_matrix
 
-# Try to import NODETYPE from habitat constants first, fall back to regular constants
-try:
-    from moma_llm.utils.habitat_constants import NODETYPE
-except ImportError:
-    from moma_llm.utils.constants import NODETYPE
+from moma_llm.utils.constants import NODETYPE
 
 
 def aggregate_close_nodes(graph, voxel_size: float, thres_meter: float):

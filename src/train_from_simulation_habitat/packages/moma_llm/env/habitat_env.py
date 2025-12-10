@@ -388,7 +388,7 @@ class OurHabitatEnv:
             grid_size=int(np.ceil(self.config.get("grid_size_meter", 30) / 
                                   self.config.get("voxel_size", 0.075))),
             sensor_range=self.config.get("depth_high", 5.0),
-            min_points_for_detection=self.config.get("min_points_for_detection", 50),
+            min_points_for_detection=self.config.get("min_points_for_detection", 10),
             verbose=self.config.get("verbose", False)
         )
         
@@ -733,9 +733,30 @@ class OurHabitatEnv:
             )
             sparse_voronoi_graph = self.topology_mapping.sparsify_topology_graph()
             
-            # Detect rooms (simplified for Habitat)
-            separated_voronoi_graph = sparse_voronoi_graph.copy()
-            door_pos = np.array([[0, 0]])  # Placeholder
+            # Detect rooms by cutting voronoi graph at CLOSED door locations
+            # Open doors are ignored so connected spaces remain as one room
+            from moma_llm.topology.habitat_topology import detect_rooms
+            separated_voronoi_graph, door_prob_map, door_pos = detect_rooms(
+                scene=self.scene,
+                slam=self.slam,
+                graph=sparse_voronoi_graph,
+                obstacle_map=wall_map,
+                sdf_scale=self.topology_mapping.sdf_scale,
+                thresh=0.0001,  # Door probability threshold for edge cutting
+                voxel_size=self.slam.voxel_size,
+                obj_to_neglect=[],
+                opened_windows=self.opened_windows,
+                opened_doors=self.opened_doors  # Pass opened doors so they don't cause cuts
+            )
+            
+            # If room detection failed (empty graph), fall back to original
+            if len(separated_voronoi_graph.nodes) == 0:
+                separated_voronoi_graph = sparse_voronoi_graph.copy()
+                print("DEBUG: Room detection returned empty graph, using original")
+            else:
+                # Count connected components (rooms)
+                num_rooms = nx.number_connected_components(separated_voronoi_graph)
+                print(f"DEBUG Room Detection: Found {num_rooms} room(s), {len(door_pos)} closed door positions used for cuts")
             
             # Create room-object graph
             room_graph, room_object_graph = create_room_object_graph(
@@ -945,35 +966,153 @@ class OurHabitatEnv:
         """Get renderer (compatibility property)."""
         return type('obj', (object,), {'V': self._get_camera_extrinsic()})
     
-    def save_video(self, output_path: str, fps: int = 30):
+    def save_video(self, output_path: str, fps: int = 30, task_text: str = None):
         """
-        Save collected RGB frames as a video file.
+        Save collected RGB frames as a video file with optional task text overlay.
         
         Args:
             output_path: Path to save the video (e.g., 'output.mp4')
             fps: Frames per second for the video
+            task_text: Optional text to overlay on video (e.g., task description)
         """
         if not self.rgb_frames:
             print("No RGB frames to save")
             return
+        
+        # Get task text from task if not provided
+        if task_text is None and hasattr(self, 'task') and self.task is not None:
+            task_text = getattr(self.task, 'task_description', None)
+        
+        frames_to_save = self.rgb_frames
+        
+        # Add text overlay if task_text is provided
+        if task_text:
+            frames_to_save = self._add_text_overlay_to_frames(self.rgb_frames, task_text)
             
         try:
             import imageio
-            print(f"Saving video with {len(self.rgb_frames)} frames to {output_path}")
-            imageio.mimsave(output_path, self.rgb_frames, fps=fps)
+            print(f"Saving video with {len(frames_to_save)} frames to {output_path}")
+            if task_text:
+                print(f"  Task overlay: {task_text}")
+            imageio.mimsave(output_path, frames_to_save, fps=fps)
             print(f"Video saved to {output_path}")
         except ImportError:
             print("imageio not installed. Install with: pip install imageio imageio-ffmpeg")
             # Fallback: save as GIF using PIL
             try:
                 from PIL import Image
-                images = [Image.fromarray(frame) for frame in self.rgb_frames]
+                images = [Image.fromarray(frame) for frame in frames_to_save]
                 gif_path = output_path.replace('.mp4', '.gif')
                 images[0].save(gif_path, save_all=True, append_images=images[1:], 
                               duration=1000//fps, loop=0)
                 print(f"Saved as GIF to {gif_path}")
             except Exception as e:
                 print(f"Failed to save video: {e}")
+    
+    def _add_text_overlay_to_frames(self, frames: list, text: str) -> list:
+        """
+        Add text overlay to all frames.
+        
+        Args:
+            frames: List of RGB frames (numpy arrays)
+            text: Text to overlay
+            
+        Returns:
+            List of frames with text overlay
+        """
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            import numpy as np
+            
+            overlaid_frames = []
+            
+            # Try to load a nicer font, fall back to default
+            try:
+                # Try common system fonts
+                font_size = 16
+                for font_name in ['/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                                  '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+                                  '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
+                                  'arial.ttf', 'Arial.ttf']:
+                    try:
+                        font = ImageFont.truetype(font_name, font_size)
+                        break
+                    except (IOError, OSError):
+                        continue
+                else:
+                    font = ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            
+            # Wrap text if too long
+            max_chars = 50
+            if len(text) > max_chars:
+                words = text.split()
+                lines = []
+                current_line = ""
+                for word in words:
+                    if len(current_line) + len(word) + 1 <= max_chars:
+                        current_line = f"{current_line} {word}".strip()
+                    else:
+                        if current_line:
+                            lines.append(current_line)
+                        current_line = word
+                if current_line:
+                    lines.append(current_line)
+                text = "\n".join(lines)
+            
+            for frame in frames:
+                # Convert numpy array to PIL Image
+                img = Image.fromarray(frame)
+                draw = ImageDraw.Draw(img)
+                
+                # Get image dimensions
+                img_width, img_height = img.size
+                
+                # Calculate text bounding box
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                
+                # Position text at top-center with padding
+                padding = 5
+                x = (img_width - text_width) // 2
+                y = padding
+                
+                # Draw semi-transparent background rectangle
+                bg_x1 = x - padding
+                bg_y1 = y - padding
+                bg_x2 = x + text_width + padding
+                bg_y2 = y + text_height + padding
+                
+                # Create semi-transparent overlay
+                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                overlay_draw = ImageDraw.Draw(overlay)
+                overlay_draw.rectangle([bg_x1, bg_y1, bg_x2, bg_y2], fill=(0, 0, 0, 180))
+                
+                # Convert to RGBA if needed
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                
+                # Composite overlay
+                img = Image.alpha_composite(img, overlay)
+                
+                # Draw text
+                draw = ImageDraw.Draw(img)
+                draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+                
+                # Convert back to RGB numpy array
+                img_rgb = img.convert('RGB')
+                overlaid_frames.append(np.array(img_rgb))
+            
+            return overlaid_frames
+            
+        except ImportError as e:
+            print(f"PIL not available for text overlay: {e}")
+            return frames
+        except Exception as e:
+            print(f"Failed to add text overlay: {e}")
+            return frames
 
 
 def create_habitat_env(config_file: str, 

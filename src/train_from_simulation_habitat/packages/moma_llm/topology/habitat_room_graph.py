@@ -459,10 +459,18 @@ def object_room_assignment(scene,
         node_prop["closest_vor_node"] = tuple(node_closest_to_viewpoint)
         
         if node_prop["semantic_class_name"] == "door":
+            print(f"DEBUG create_room_object_graph: Found door '{node_prop['name']}' at pos {node_prop.get('pos', 'unknown')}")
             if node_prop["name"] not in opened_doors:
                 room_node = room_object_graph.nodes.get(NODETYPE.roomname(node_prop["room_id"]))
                 if room_node:
+                    # Store door name AND add door as node so we can access its properties
                     room_node["closed_doors"].add(node_prop["name"])
+                    # Also add door as a node to the graph so _open_graph_node can find it
+                    room_object_graph.add_node(node_prop["name"], **node_prop, node_type=NODETYPE.OBJECT)
+                    room_object_graph.add_edge(NODETYPE.roomname(node_prop["room_id"]), node_prop["name"])
+                    print(f"DEBUG create_room_object_graph:   -> Added to closed_doors in {NODETYPE.roomname(node_prop['room_id'])}")
+                else:
+                    print(f"DEBUG create_room_object_graph:   -> Room node not found for room_id={node_prop['room_id']}")
             else:
                 comps = door2comp.get(node_prop["name"], [])
                 if len(comps) == 1:
@@ -474,7 +482,7 @@ def object_room_assignment(scene,
                     room_object_graph.nodes[NODETYPE.roomname(comps[1])]["open_doors"].add(
                         (node_prop["name"], NODETYPE.roomname(comps[0]))
                     )
-                continue
+            continue
         
         room_object_graph.add_node(node_prop["name"], **node_prop, node_type=NODETYPE.OBJECT)
         room_object_graph.add_edge(NODETYPE.roomname(node_prop["room_id"]), node_prop["name"])

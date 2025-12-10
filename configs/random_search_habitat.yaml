@@ -1,9 +1,9 @@
-# SmallPlan Configuration for Habitat-Lab/Habitat-Sim
-# This replaces the iGibson configuration
+# Random Search Configuration for Habitat-Lab/Habitat-Sim
+# This configuration is used for the random search baseline
+# Same as moma_llm_habitat.yaml but with agent set to "random"
 
 wandb: true
-agent: moma_llm  # moma_llm / json_llm / greedy / random
-prompt_version: 1  # 1 = original prompts (prompts.py), 2 = improved prompts with failure feedback (prompts_v2.py)
+agent: random  # Fixed to random for this baseline
 
 # Whether to use distances and room-object assignments based on viewpoint & voronoi
 use_viewpoint_assignment: true
@@ -54,15 +54,14 @@ robot:
   
 # Task configuration
 task: object_search
-seed: 42
+seed: 42  # Same seed as LLM inference for fair comparison
 
 # Discount factor
 discount_factor: 0.99
 
 # Termination conditions
 max_step: 10000000000
-max_high_level_steps: 50
-max_llm_queries: 100  # Maximum LLM API calls per episode (0 or null = no limit)
+max_high_level_steps: 50  # Same as LLM inference
 
 # Sensor specifications
 output: [rgb, depth, semantic]

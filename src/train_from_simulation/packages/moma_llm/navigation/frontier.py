@@ -7,17 +7,8 @@ import cv2
 import numpy as np
 import skimage
 
-# Try to import Habitat TopologyMapping first, fall back to iGibson version
-try:
-    from moma_llm.topology.habitat_topology import HabitatTopologyMapping as TopologyMapping
-except ImportError:
-    from moma_llm.topology.topology import TopologyMapping
-
-# Try to import from habitat_constants first, fall back to regular constants
-try:
-    from moma_llm.utils.habitat_constants import FRONTIER_CLASSIFICATION, OCCUPANCY
-except ImportError:
-    from moma_llm.utils.constants import FRONTIER_CLASSIFICATION, OCCUPANCY
+from moma_llm.topology.topology import TopologyMapping
+from moma_llm.utils.constants import FRONTIER_CLASSIFICATION, OCCUPANCY
 
 
 def find_frontiers(occupancy_map, agent_pos_pixel, smoothing_kernel_size: int):   

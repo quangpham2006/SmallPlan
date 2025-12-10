@@ -159,28 +159,52 @@ class HabitatSimpleSlam:
     
     def delete_obj_from_voxel_map(self, obj):
         """
-        Delete object from voxel map.
+        Delete object from voxel map and update BEV maps.
+        This is essential for allowing navigation through opened doors.
         
         Args:
-            obj: Object wrapper with bounding box information
+            obj: Object wrapper with bounding box information or position
         """
         try:
-            bbox_center, _, bbox_extent, _ = obj.get_base_aligned_bounding_box()
-            
-            # Calculate corners
-            half_extent = bbox_extent / 2
-            min_corner = bbox_center[:2] - half_extent[:2]
-            max_corner = bbox_center[:2] + half_extent[:2]
+            # Try to get bounding box, otherwise use position
+            if hasattr(obj, 'get_base_aligned_bounding_box'):
+                bbox_center, _, bbox_extent, _ = obj.get_base_aligned_bounding_box()
+                half_extent = bbox_extent / 2
+                min_corner = bbox_center[:2] - half_extent[:2]
+                max_corner = bbox_center[:2] + half_extent[:2]
+            else:
+                # Fallback: use position with default extent
+                pos = obj.get_position()
+                door_extent = 0.5  # Default door half-width in meters
+                # Habitat: Y-up, so horizontal plane is X-Z
+                min_corner = np.array([pos[0] - door_extent, pos[2] - door_extent])
+                max_corner = np.array([pos[0] + door_extent, pos[2] + door_extent])
             
             # Convert to voxel coordinates
             min_voxel = self.world2voxel(min_corner)
             max_voxel = self.world2voxel(max_corner)
             
-            # Clear voxels
-            self.voxel_map[
-                min_voxel[0]-1:max_voxel[0]+1,
-                min_voxel[1]-1:max_voxel[1]+1
-            ] = 0
+            # Expand by 1 voxel to ensure complete clearing
+            x_min, x_max = min_voxel[0] - 1, max_voxel[0] + 2
+            y_min, y_max = min_voxel[1] - 1, max_voxel[1] + 2
+            
+            # Clip to valid range
+            x_min = max(0, x_min)
+            y_min = max(0, y_min)
+            x_max = min(self.grid_size, x_max)
+            y_max = min(self.grid_size, y_max)
+            
+            # Clear voxels in 3D map
+            self.voxel_map[x_min:x_max, y_min:y_max, :] = 0
+            
+            # CRITICAL: Update BEV occupancy map to mark as FREE
+            # This allows path planning to go through the doorway
+            self.bev_map_occupancy[x_min:x_max, y_min:y_max] = OCCUPANCY.FREE
+            self.bev_map_semantic[x_min:x_max, y_min:y_max] = 0
+            
+            if self.verbose:
+                print(f"Deleted object from map: voxel range [{x_min}:{x_max}, {y_min}:{y_max}]")
+            
         except Exception as e:
             print(f"Warning: Could not delete object from map: {e}")
 
