@@ -12,8 +12,10 @@ Reference: https://github.com/AIGeeksGroup/Nav-R1
 """
 
 import argparse
+import atexit
 import logging
 import os
+import signal
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +31,52 @@ load_dotenv()
 # Suppress Habitat logging noise
 os.environ['MAGNUM_LOG'] = 'quiet'
 os.environ['HABITAT_SIM_LOG'] = 'quiet'
+
+# Global state for cleanup on interrupt
+_current_env = None
+_current_video_path = None
+_video_saved = False
+_run_dir = None
+
+
+def _save_video_on_exit():
+    """Save video when script exits (cleanup handler) - saves to 'error' subdirectory."""
+    global _current_env, _current_video_path, _video_saved, _run_dir
+    
+    if _video_saved:
+        return
+        
+    if _current_env is not None and _current_video_path is not None:
+        try:
+            video_filename = os.path.basename(_current_video_path)
+            if _run_dir:
+                error_dir = os.path.join(_run_dir, "videos", "error")
+            else:
+                video_dir = os.path.dirname(_current_video_path)
+                error_dir = os.path.join(os.path.dirname(video_dir), "error")
+            os.makedirs(error_dir, exist_ok=True)
+            error_video_path = os.path.join(error_dir, video_filename)
+            
+            logging.info(f"Saving video on exit (interrupted/error) to {error_video_path}")
+            if hasattr(_current_env, 'save_video'):
+                _current_env.save_video(error_video_path, fps=10)
+            _video_saved = True
+            logging.info("Video saved successfully to error directory")
+        except Exception as e:
+            logging.error(f"Failed to save video on exit: {e}")
+
+
+def _signal_handler(signum, frame):
+    """Handle interrupt signals (Ctrl+C)."""
+    logging.info(f"\nReceived signal {signum}. Saving video before exit...")
+    _save_video_on_exit()
+    sys.exit(0)
+
+
+# Register signal handlers
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
+atexit.register(_save_video_on_exit)
 
 from .core.simulator import HabitatSimulator, SimulatorConfig
 from .core.environment import ObjectNavEnv
@@ -182,20 +230,46 @@ class InferenceRunner:
     
     def _create_run_dir(self) -> Path:
         """Create timestamped run directory."""
+        global _run_dir
+        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = Path(self.config.output_dir) / timestamp
         run_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create subdirectories
+        # Create subdirectories (including error for interrupt/crash videos)
         (run_dir / "videos" / "success").mkdir(parents=True, exist_ok=True)
         (run_dir / "videos" / "failed").mkdir(parents=True, exist_ok=True)
+        (run_dir / "videos" / "error").mkdir(parents=True, exist_ok=True)
+        
+        # Set global run_dir for interrupt handler
+        _run_dir = str(run_dir)
         
         # Save config
         config_dict = {k: v for k, v in self.config.__dict__.items()}
         with open(run_dir / "config.yaml", 'w') as f:
             yaml.dump(config_dict, f)
         
+        # Setup file logging
+        self._setup_file_logging(run_dir)
+        
         return run_dir
+    
+    def _setup_file_logging(self, run_dir: Path):
+        """Setup logging to both console and file."""
+        log_file = run_dir / "log.txt"
+        
+        # Create file handler
+        file_handler = logging.FileHandler(log_file, mode='w')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
+        
+        # Add handler to root logger
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+        
+        logger.info(f"Logging to file: {log_file}")
     
     def _create_agent(self) -> BaseAgent:
         """Create agent based on config."""
@@ -302,10 +376,21 @@ class InferenceRunner:
                      agent: BaseAgent,
                      episode_idx: int) -> EpisodeResult:
         """Run a single episode."""
+        global _current_env, _current_video_path, _video_saved
+        
         # Reset environment and agent
         obs, info = env.reset(episode_id=episode_idx)
         target = info["target"]
         agent.reset(target_category=target)
+        
+        # Set up global state for interrupt handling
+        if self.config.save_videos:
+            _current_env = env
+            _current_video_path = str(
+                self.run_dir / "videos" / "error" / 
+                f"{env.scene_id}_ep{episode_idx}_{target}.mp4"
+            )
+            _video_saved = False
         
         done = False
         failure_reason = None
@@ -347,6 +432,7 @@ class InferenceRunner:
             video_name = f"{env.scene_id}_ep{episode_idx}_{target}.mp4"
             video_path = str(self.run_dir / "videos" / subdir / video_name)
             env.save_video(video_path, fps=self.config.video_fps)
+            _video_saved = True  # Mark as saved so interrupt handler doesn't save again
         
         return EpisodeResult(
             scene_id=env.scene_id,
