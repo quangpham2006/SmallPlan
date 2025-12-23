@@ -1,0 +1,50 @@
+# Habitat Object Navigation Configuration
+# Reference: https://github.com/AIGeeksGroup/Nav-R1
+
+# Scene settings
+dataset: hm3d
+split: test
+scene_ids: []  # Empty = use all scenes from split
+
+# Episode settings
+num_episodes_per_scene: 5
+max_episode_steps: 500
+success_distance: 1.5  # meters
+
+# Agent settings
+agent_type: llm  # Options: llm, llm-openai, llm-custom, random
+llm_api_type: openai  # Options: custom, openai
+llm_api_url: http://localhost:8000/generate  # For custom API
+llm_model: gpt-4o  # Model name (OpenAI: gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
+llm_temperature: 0.0
+
+# Simulator settings (Nav-R1 compatible)
+image_width: 256
+image_height: 256
+hfov: 90  # Horizontal field of view in degrees
+sensor_height: 1.5  # meters
+
+# Agent physics
+agent_height: 1.5  # meters
+agent_radius: 0.1  # meters
+forward_step_size: 0.25  # meters per MOVE_FORWARD action (Nav-R1 default)
+turn_angle: 30.0  # degrees per turn action (Nav-R1 default)
+
+# Navigation settings
+navigation_inflation_radius: 0.4  # meters - clearance from obstacles
+
+# SLAM settings
+voxel_size: 0.075
+grid_size_meter: 30
+depth_min: 0.0
+depth_max: 5.0
+
+# Output settings
+output_dir: ./outputs/habitat_nav
+save_videos: true
+video_fps: 10
+
+# Misc
+seed: 42
+verbose: false
+
