@@ -171,7 +171,7 @@ DEFAULT_CONFIG = {
     
     # Episode settings
     "max_episode_steps": 500,
-    "max_high_level_steps": 50,
+    "max_high_level_steps": 200,
     
     # SLAM settings
     "voxel_size": 0.075,

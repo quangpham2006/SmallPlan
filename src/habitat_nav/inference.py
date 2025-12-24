@@ -17,6 +17,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -81,7 +82,8 @@ atexit.register(_save_video_on_exit)
 from .core.simulator import HabitatSimulator, SimulatorConfig
 from .core.environment import ObjectNavEnv
 from .core.observations import ProcessedObservation
-from .agents import BaseAgent, LLMAgent, RandomAgent
+from .core.action_executor import ActionExecutor, NavigationConfig
+from .agents import BaseAgent, LLMAgent, RandomAgent, TwoPlannerAgent, ImagePlannerAgent
 from .tasks.object_nav import ObjectNavTask, TaskResult
 from .utils.actions import Action, HighLevelAction
 from .utils.constants import get_scenes_for_dataset, DEFAULT_CONFIG
@@ -103,22 +105,39 @@ class InferenceConfig:
     split: str = "test"
     
     # Episode settings
-    num_episodes_per_scene: int = 5
-    max_episode_steps: int = 500
+    num_episodes_per_scene: int = 3
+    max_episode_steps: int = 500  # Max low-level steps (for low-level action mode)
+    max_llm_queries: int = 100  # Max LLM queries (for high-level action mode)
     success_distance: float = 1.5
     
     # Agent settings
     agent_type: str = "llm"  # "llm", "llm-openai", "random"
+    planner_type: str = "single"  # "single", "two", or "image"
     llm_api_url: str = "http://localhost:8000/generate"
     llm_api_type: str = "custom"  # "custom" or "openai"
-    llm_model: str = "gpt-4o"  # Model name for LLM
+    llm_model: str = "gpt-4o"  # Model name for main LLM
+    narrator_model: str = "gpt-4o-mini"  # Model for narrator (two-planner only)
     openai_api_key: Optional[str] = os.environ.get("OPENAI_API_KEY")
     llm_temperature: float = 0.7
+    narrator_temperature: float = 0.7  # Narrator temperature (two-planner only)
+    narrator_update_frequency: int = 3  # Generate story every N actions (two-planner only)
+    action_level: str = "low"  # "low" for low-level actions, "high" for high-level actions
+    
+    # Image planner settings
+    max_images: int = 3  # Number of images to send to LLM (image planner only)
+    image_detail: str = "low"  # Image detail level: "low", "high", "auto" (image planner only)
     
     # Output settings
     output_dir: str = "./outputs/habitat_nav"
     save_videos: bool = True
     video_fps: int = 10
+    
+    # Navigation settings
+    collect_action_images: bool = False  # Collect images during actions for LLM context
+    collision_distance: float = 0.4      # Safe distance from obstacles (meters)
+    
+    # Video settings
+    annotate_videos: bool = True         # Annotate video frames with object bounding boxes
     
     # Misc
     seed: int = 42
@@ -160,10 +179,26 @@ class InferenceConfig:
             config.openai_api_key = args.openai_key
         if args.temperature:
             config.llm_temperature = args.temperature
+        if hasattr(args, 'action_level') and args.action_level:
+            config.action_level = args.action_level
+        if hasattr(args, 'planner') and args.planner:
+            config.planner_type = args.planner
+        if hasattr(args, 'narrator_model') and args.narrator_model:
+            config.narrator_model = args.narrator_model
+        if hasattr(args, 'narrator_temperature') and args.narrator_temperature:
+            config.narrator_temperature = args.narrator_temperature
+        if hasattr(args, 'narrator_update_freq') and args.narrator_update_freq:
+            config.narrator_update_frequency = args.narrator_update_freq
+        if hasattr(args, 'max_images') and args.max_images:
+            config.max_images = args.max_images
+        if hasattr(args, 'image_detail') and args.image_detail:
+            config.image_detail = args.image_detail
         if args.output:
             config.output_dir = args.output
         if args.no_video:
             config.save_videos = False
+        if hasattr(args, 'no_annotations') and args.no_annotations:
+            config.annotate_videos = False
         if args.verbose:
             config.verbose = True
         if args.seed:
@@ -182,8 +217,10 @@ class EpisodeResult:
     spl: float
     steps: int
     distance_travelled: float
+    episode_time: float = 0.0  # Time in seconds
     failure_reason: Optional[str] = None
     video_path: Optional[str] = None
+    final_interaction: Optional[Dict[str, Any]] = None  # Final LLM interaction
     
     def to_dict(self) -> Dict:
         return {
@@ -194,6 +231,7 @@ class EpisodeResult:
             "spl": self.spl,
             "steps": self.steps,
             "distance_travelled": self.distance_travelled,
+            "episode_time": self.episode_time,
             "failure_reason": self.failure_reason,
         }
 
@@ -229,11 +267,13 @@ class InferenceRunner:
         logger.info(f"  Output: {self.run_dir}")
     
     def _create_run_dir(self) -> Path:
-        """Create timestamped run directory."""
+        """Create timestamped run directory with planner type prefix."""
         global _run_dir
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = Path(self.config.output_dir) / timestamp
+        planner_type = self.config.planner_type  # "single", "two", or "image"
+        run_name = f"{planner_type}_{timestamp}"
+        run_dir = Path(self.config.output_dir) / run_name
         run_dir.mkdir(parents=True, exist_ok=True)
         
         # Create subdirectories (including error for interrupt/crash videos)
@@ -255,21 +295,11 @@ class InferenceRunner:
         return run_dir
     
     def _setup_file_logging(self, run_dir: Path):
-        """Setup logging to both console and file."""
-        log_file = run_dir / "log.txt"
-        
-        # Create file handler
-        file_handler = logging.FileHandler(log_file, mode='w')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
-        
-        # Add handler to root logger
-        root_logger = logging.getLogger()
-        root_logger.addHandler(file_handler)
-        
-        logger.info(f"Logging to file: {log_file}")
+        """Setup logging - console only, log.txt written at end with clean format."""
+        # We don't add a file handler here anymore
+        # Instead, we write a clean log.txt at the end with _save_results()
+        # This avoids verbose logging in the output file
+        logger.info(f"Run directory: {run_dir}")
     
     def _create_agent(self) -> BaseAgent:
         """Create agent based on config."""
@@ -282,16 +312,55 @@ class InferenceRunner:
             else:
                 api_type = self.config.llm_api_type
             
-            logger.info(f"Creating LLM agent: api_type={api_type}, model={self.config.llm_model}")
-            
-            return LLMAgent(
-                api_type=api_type,
-                api_url=self.config.llm_api_url,
-                model_name=self.config.llm_model,
-                openai_api_key=self.config.openai_api_key,
-                temperature=self.config.llm_temperature,
-                name="llm_agent"
-            )
+            # Check planner type
+            if self.config.planner_type == "two":
+                logger.info(f"Creating Two-Planner agent: api_type={api_type}, "
+                           f"main_model={self.config.llm_model}, "
+                           f"narrator_model={self.config.narrator_model}, "
+                           f"action_level={self.config.action_level}")
+                
+                return TwoPlannerAgent(
+                    api_type=api_type,
+                    api_url=self.config.llm_api_url,
+                    main_model=self.config.llm_model,
+                    narrator_model=self.config.narrator_model,
+                    openai_api_key=self.config.openai_api_key,
+                    temperature=self.config.llm_temperature,
+                    narrator_temperature=self.config.narrator_temperature,
+                    action_level=self.config.action_level,
+                    narrator_update_frequency=self.config.narrator_update_frequency,
+                    include_story=True,
+                    name="two_planner_agent"
+                )
+            elif self.config.planner_type == "image":
+                logger.info(f"Creating Image-Planner agent: "
+                           f"model={self.config.llm_model}, "
+                           f"max_images={self.config.max_images}, "
+                           f"action_level={self.config.action_level}")
+                
+                return ImagePlannerAgent(
+                    model_name=self.config.llm_model,
+                    openai_api_key=self.config.openai_api_key,
+                    temperature=self.config.llm_temperature,
+                    action_level=self.config.action_level,
+                    max_images=self.config.max_images,
+                    image_detail=self.config.image_detail,
+                    name="image_planner_agent"
+                )
+            else:
+                # Single planner (default)
+                logger.info(f"Creating Single-Planner LLM agent: api_type={api_type}, "
+                           f"model={self.config.llm_model}, action_level={self.config.action_level}")
+                
+                return LLMAgent(
+                    api_type=api_type,
+                    api_url=self.config.llm_api_url,
+                    model_name=self.config.llm_model,
+                    openai_api_key=self.config.openai_api_key,
+                    temperature=self.config.llm_temperature,
+                    action_level=self.config.action_level,
+                    name="llm_agent"
+                )
         elif self.config.agent_type == "random":
             return RandomAgent(seed=self.config.seed, name="random_agent")
         else:
@@ -351,15 +420,25 @@ class InferenceRunner:
             config=DEFAULT_CONFIG,
             max_episode_steps=self.config.max_episode_steps,
             success_distance=self.config.success_distance,
-            seed=self.config.seed
+            seed=self.config.seed,
+            annotate_videos=self.config.annotate_videos
         )
         
         # Create agent
         agent = self._create_agent()
         
+        # Create action executor for high-level actions
+        action_executor = None
+        if self.config.action_level == "high":
+            nav_config = NavigationConfig(
+                collision_distance=self.config.collision_distance,
+                success_distance=self.config.success_distance
+            )
+            action_executor = ActionExecutor(env, nav_config)
+        
         try:
             for episode_idx in range(self.config.num_episodes_per_scene):
-                result = self._run_episode(env, agent, episode_idx)
+                result = self._run_episode(env, agent, episode_idx, action_executor)
                 results.append(result)
                 
                 # Progress logging
@@ -374,14 +453,21 @@ class InferenceRunner:
     def _run_episode(self, 
                      env: ObjectNavEnv, 
                      agent: BaseAgent,
-                     episode_idx: int) -> EpisodeResult:
+                     episode_idx: int,
+                     action_executor: Optional[ActionExecutor] = None) -> EpisodeResult:
         """Run a single episode."""
         global _current_env, _current_video_path, _video_saved
+        
+        # Start timing
+        episode_start_time = time.time()
         
         # Reset environment and agent
         obs, info = env.reset(episode_id=episode_idx)
         target = info["target"]
         agent.reset(target_category=target)
+        
+        if action_executor:
+            action_executor.reset()
         
         # Set up global state for interrupt handling
         if self.config.save_videos:
@@ -394,36 +480,100 @@ class InferenceRunner:
         
         done = False
         failure_reason = None
+        llm_query_count = 0  # Track LLM queries for high-level timeout
         
         while not done:
             # Get action from agent
             action = agent.act(obs, env.get_task_description(), info)
+            llm_query_count += 1  # Each act() call = one LLM query
             
-            # Convert high-level action to low-level if needed
-            if isinstance(action, HighLevelAction):
-                low_level_action = self._execute_high_level_action(
-                    env, action, obs
-                )
+            if self.config.action_level == "high" and action_executor and isinstance(action, HighLevelAction):
+                # Execute high-level action
+                if action.name == "stop":
+                    obs, _, info = env.step(Action.STOP)
+                    action_feedback = "STOP action executed"
+                    result = None
+                else:
+                    result = action_executor.execute(action, obs)
+                    action_feedback = result.feedback
+                    # Get updated observation from result
+                    if result.observation is not None:
+                        obs = result.observation
+                    # Always refresh info from environment to get current state
+                    info = env.get_info()
+                    
+                    # Mark target as reached if goto succeeded to the target object
+                    # This ensures success even if target isn't visible when stop() is called
+                    if (action.name == "goto" and result.success and 
+                        hasattr(action, 'argument') and action.argument):
+                        target = info.get("target", "").lower()
+                        goto_target = action.argument.lower()
+                        # Check if goto target matches episode target (partial match)
+                        if target in goto_target or goto_target in target:
+                            env.mark_target_reached()
+                
+                # Add action result to info for agent's update method
+                if result is not None:
+                    info["action_result"] = result
+                
+                # Update high-level step count in episode info
+                env.episode_info.high_level_step_count = llm_query_count
             else:
-                low_level_action = action
+                # Execute low-level action
+                original_action = action
+                action = env.simulator.get_safe_action(action)
+                
+                obs, _, info = env.step(action)
+                
+                # Provide feedback about collision avoidance
+                if action != original_action:
+                    action_feedback = f"Collision avoided: {original_action.name} -> {action.name}"
+                else:
+                    action_feedback = f"Executed {action.name}"
             
-            # Step environment
-            obs, reward, info = env.step(low_level_action)
             done = info["done"]
             
-            # Update agent
-            agent.update(action, obs, reward, info)
+            # Add max_steps to info for agent's update method
+            info["max_steps"] = self.config.max_episode_steps
+            info["llm_query_count"] = llm_query_count
+            info["action_feedback"] = action_feedback
             
-            # Check for timeout
-            if info["step_count"] >= self.config.max_episode_steps:
-                failure_reason = "timeout"
+            # Update agent with full info
+            agent.update(action, obs, info)
+            
+            # Check for timeout based on action level
+            if self.config.action_level == "high":
+                # High-level mode: timeout based on LLM queries
+                if llm_query_count >= self.config.max_llm_queries:
+                    failure_reason = "timeout"
+                    done = True
+                    logger.info(f"Episode timed out after {llm_query_count} LLM queries")
+            else:
+                # Low-level mode: timeout based on action steps
+                if info["step_count"] >= self.config.max_episode_steps:
+                    failure_reason = "timeout"
+                    done = True
         
         # Compute metrics
+        episode_time = time.time() - episode_start_time
         success = info["success"]
         spl = env.compute_spl()
         
         if not success and not failure_reason:
             failure_reason = "target_not_found"
+        
+        # Get final LLM interaction for logging
+        final_interaction = None
+        if hasattr(agent, 'get_last_interaction'):
+            final_interaction = agent.get_last_interaction()
+            # Add success status to the interaction
+            final_interaction["success"] = success
+        
+        # Log episode summary to console only
+        self._log_episode_summary(
+            env.scene_id, episode_idx, target, success, 
+            info["step_count"], spl, episode_time, failure_reason, agent
+        )
         
         # Save video
         video_path = None
@@ -442,57 +592,45 @@ class InferenceRunner:
             spl=spl,
             steps=info["step_count"],
             distance_travelled=info["distance_travelled"],
+            episode_time=episode_time,
             failure_reason=failure_reason,
             video_path=video_path,
+            final_interaction=final_interaction,
         )
     
-    def _execute_high_level_action(self,
-                                   env: ObjectNavEnv,
-                                   action: HighLevelAction,
-                                   obs: ProcessedObservation) -> Action:
-        """
-        Convert high-level action to low-level action.
-        
-        This is a simplified mapping - a full implementation would include
-        path planning and navigation controllers.
-        """
-        if action.name == "stop":
-            return Action.STOP
-        
-        # For simplicity, just move forward or turn randomly
-        # A full implementation would do proper path planning
-        if action.name in ("goto", "explore"):
-            # Check if obstacle ahead
-            if obs.depth is not None:
-                center_depth = obs.depth[
-                    obs.depth.shape[0] // 2,
-                    obs.depth.shape[1] // 2
-                ]
-                if center_depth < 0.5:  # Obstacle close
-                    return Action.TURN_LEFT if self.rng.random() > 0.5 else Action.TURN_RIGHT
-            return Action.MOVE_FORWARD
-        
-        if action.name == "open":
-            # Move towards the door/object
-            return Action.MOVE_FORWARD
-        
-        return Action.MOVE_FORWARD
+    def _log_episode_summary(self,
+                             scene_id: str,
+                             episode_idx: int,
+                             target: str,
+                             success: bool,
+                             steps: int,
+                             spl: float,
+                             episode_time: float,
+                             failure_reason: Optional[str],
+                             agent: BaseAgent):
+        """Log a brief summary of the episode to console."""
+        status = "SUCCESS" if success else "FAILED"
+        logger.info(f"Episode {episode_idx} [{status}] - Target: {target}, "
+                   f"Steps: {steps}, SPL: {spl:.3f}, Time: {episode_time:.1f}s")
     
     def _compute_summary(self) -> Dict[str, Any]:
         """Compute summary statistics."""
         if not self.results:
-            return {"success_rate": 0.0, "avg_spl": 0.0}
+            return {"success_rate": 0.0, "avg_spl": 0.0, "avg_time": 0.0, "avg_steps": 0.0}
         
         successes = [r.success for r in self.results]
         spls = [r.spl for r in self.results]
         steps = [r.steps for r in self.results]
+        times = [r.episode_time for r in self.results]
         
         return {
             "total_episodes": len(self.results),
             "success_rate": np.mean(successes),
             "avg_spl": np.mean(spls),
             "avg_steps": np.mean(steps),
+            "avg_time": np.mean(times),
             "std_steps": np.std(steps),
+            "std_time": np.std(times),
             "num_scenes": len(set(r.scene_id for r in self.results)),
         }
     
@@ -508,28 +646,100 @@ class InferenceRunner:
         with open(self.run_dir / "summary.yaml", 'w') as f:
             yaml.dump(summary, f)
         
-        # Save human-readable log
-        with open(self.run_dir / "log.txt", 'w') as f:
-            f.write("=" * 60 + "\n")
-            f.write(f"Habitat ObjectNav Inference Results\n")
+        # Save clean log.txt with only final interactions and summary
+        self._write_clean_log(summary)
+    
+    def _write_clean_log(self, summary: Dict[str, Any]):
+        """
+        Write a clean log.txt with only summary metrics and final LLM interactions.
+        
+        Format:
+        - Summary section with SUCCESS RATE, SPL, AVG TIME, AVG STEPS
+        - Per-episode section with final system prompt, user prompt, response, action, success
+        """
+        with open(self.run_dir / "log.txt", 'w', encoding='utf-8') as f:
+            # Header
+            f.write("=" * 80 + "\n")
+            f.write("HABITAT OBJECTNAV INFERENCE RESULTS\n")
             f.write(f"Run: {self.run_dir.name}\n")
-            f.write("=" * 60 + "\n\n")
+            f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 80 + "\n\n")
             
-            f.write("SUMMARY\n")
-            f.write("-" * 40 + "\n")
-            for key, value in summary.items():
-                if isinstance(value, float):
-                    f.write(f"  {key}: {value:.4f}\n")
-                else:
-                    f.write(f"  {key}: {value}\n")
+            # Summary Section
+            f.write("=" * 80 + "\n")
+            f.write("SUMMARY METRICS\n")
+            f.write("=" * 80 + "\n\n")
             
-            f.write("\n\nPER-EPISODE RESULTS\n")
-            f.write("-" * 40 + "\n")
-            for r in self.results:
+            success_rate = summary.get('success_rate', 0.0) * 100
+            avg_spl = summary.get('avg_spl', 0.0)
+            avg_time = summary.get('avg_time', 0.0)
+            avg_steps = summary.get('avg_steps', 0.0)
+            
+            f.write(f"  SUCCESS RATE:      {success_rate:.1f}%\n")
+            f.write(f"  SPL:               {avg_spl:.4f}\n")
+            f.write(f"  AVG TIME:          {avg_time:.2f} seconds\n")
+            f.write(f"  AVG STEPS:         {avg_steps:.1f}\n")
+            f.write(f"\n")
+            f.write(f"  Total Episodes:    {summary.get('total_episodes', 0)}\n")
+            f.write(f"  Num Scenes:        {summary.get('num_scenes', 0)}\n")
+            f.write(f"  Std Steps:         {summary.get('std_steps', 0.0):.2f}\n")
+            f.write(f"  Std Time:          {summary.get('std_time', 0.0):.2f} seconds\n")
+            f.write("\n")
+            
+            # Per-Episode Final Interactions
+            f.write("=" * 80 + "\n")
+            f.write("PER-EPISODE FINAL LLM INTERACTIONS\n")
+            f.write("=" * 80 + "\n\n")
+            
+            for i, r in enumerate(self.results):
                 status = "SUCCESS" if r.success else "FAILED"
-                f.write(f"  {r.scene_id} ep{r.episode_id}: {status} | "
-                       f"target={r.target_category} | steps={r.steps} | "
-                       f"SPL={r.spl:.3f}\n")
+                
+                f.write("-" * 80 + "\n")
+                f.write(f"EPISODE {r.episode_id} | {r.scene_id} | Target: {r.target_category}\n")
+                f.write(f"Result: {status} | Steps: {r.steps} | SPL: {r.spl:.4f} | Time: {r.episode_time:.1f}s\n")
+                if r.failure_reason:
+                    f.write(f"Failure Reason: {r.failure_reason}\n")
+                f.write("-" * 80 + "\n\n")
+                
+                # Write final LLM interaction
+                if r.final_interaction:
+                    interaction = r.final_interaction
+                    
+                    # System Prompt
+                    f.write(">>> SYSTEM PROMPT:\n")
+                    f.write("-" * 40 + "\n")
+                    system_prompt = interaction.get("system_prompt", "N/A")
+                    f.write(f"{system_prompt}\n\n")
+                    
+                    # User Prompt
+                    f.write(">>> USER PROMPT:\n")
+                    f.write("-" * 40 + "\n")
+                    user_prompt = interaction.get("user_prompt", "N/A")
+                    f.write(f"{user_prompt}\n\n")
+                    
+                    # LLM Response
+                    f.write(">>> LLM RESPONSE:\n")
+                    f.write("-" * 40 + "\n")
+                    response = interaction.get("response", "N/A")
+                    f.write(f"{response}\n\n")
+                    
+                    # Parsed Action
+                    f.write(">>> PARSED ACTION:\n")
+                    f.write("-" * 40 + "\n")
+                    action = interaction.get("action", "N/A")
+                    feedback = interaction.get("feedback", "")
+                    f.write(f"Action: {action}\n")
+                    if feedback:
+                        f.write(f"Feedback: {feedback}\n")
+                    f.write(f"Episode Success: {status}\n")
+                    f.write("\n")
+                else:
+                    f.write("(No LLM interaction recorded - possibly random agent)\n\n")
+            
+            # Footer
+            f.write("=" * 80 + "\n")
+            f.write("END OF LOG\n")
+            f.write("=" * 80 + "\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -539,14 +749,26 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Run with custom LLM API
+    # Run with low-level actions (default, single planner)
     python -m src.habitat_nav.inference --scene 00800-TEEsavR23oF --episodes 5
+    
+    # Run with high-level actions (goto, explore, etc.)
+    python -m src.habitat_nav.inference --action-level high --scene 00800-TEEsavR23oF
     
     # Run with OpenAI GPT-4o
     python -m src.habitat_nav.inference --agent llm-openai --model gpt-4o
     
-    # Run with OpenAI GPT-3.5-turbo (cheaper)
-    python -m src.habitat_nav.inference --agent llm-openai --model gpt-3.5-turbo
+    # Run with two-planner (main planner + narrator)
+    python -m src.habitat_nav.inference --planner two --action-level high
+    
+    # Two-planner with custom narrator model
+    python -m src.habitat_nav.inference --planner two --narrator-model gpt-4o-mini --action-level high
+    
+    # Run with image planner (sends images to GPT-4o Vision)
+    python -m src.habitat_nav.inference --planner image --action-level high
+    
+    # Image planner with custom settings
+    python -m src.habitat_nav.inference --planner image --max-images 3 --image-detail low --action-level high
     
     # Run random baseline
     python -m src.habitat_nav.inference --agent random --episodes 10
@@ -592,10 +814,67 @@ Examples:
         default=0.7,
         help="LLM sampling temperature (0.0-2.0)"
     )
+    parser.add_argument(
+        "--action-level",
+        choices=["low", "high"],
+        default="low",
+        help="Action level: 'low' for discrete actions (MOVE_FORWARD, etc.), 'high' for semantic actions (goto, explore, etc.)"
+    )
+    parser.add_argument(
+        "--planner",
+        choices=["single", "two", "image"],
+        default="single",
+        help="Planner type: 'single' for one LLM, 'two' for main planner + narrator, 'image' for vision-based"
+    )
+    parser.add_argument(
+        "--narrator-model",
+        type=str,
+        default="gpt-4o-mini",
+        help="Model for narrator LLM (two-planner only, default: gpt-4o-mini)"
+    )
+    parser.add_argument(
+        "--narrator-temperature",
+        type=float,
+        default=0.7,
+        help="Narrator LLM temperature (two-planner only)"
+    )
+    parser.add_argument(
+        "--narrator-update-freq",
+        type=int,
+        default=3,
+        help="Generate narrator story every N actions (two-planner only)"
+    )
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=3,
+        help="Maximum images to send to LLM (image planner only, default: 3)"
+    )
+    parser.add_argument(
+        "--image-detail",
+        choices=["low", "high", "auto"],
+        default="low",
+        help="Image detail level for OpenAI Vision (image planner only, default: low)"
+    )
     
     # Output settings
     parser.add_argument("--output", type=str, default="./outputs/habitat_nav", help="Output directory")
     parser.add_argument("--no-video", action="store_true", help="Disable video saving")
+    parser.add_argument("--no-annotations", action="store_true", 
+                       help="Disable video annotations (bounding boxes, labels)")
+    
+    # Navigation settings
+    parser.add_argument(
+        "--collect-images",
+        action="store_true",
+        help="Collect images during actions for LLM context"
+    )
+    parser.add_argument(
+        "--collision-distance",
+        type=float,
+        default=0.4,
+        help="Safe distance from obstacles in meters (default: 0.4)"
+    )
     
     # Misc
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")

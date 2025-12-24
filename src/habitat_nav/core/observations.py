@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ObjectInfo:
+    """Information about a visible object with distance."""
+    category: str
+    distance: float
+    position: np.ndarray
+    obj_id: int
+    
+    def __str__(self):
+        return f"{self.category} ({self.distance:.1f}m)"
+
+
+@dataclass
 class ProcessedObservation:
     """
     Processed observation containing all sensor data and derived information.
@@ -33,6 +45,34 @@ class ProcessedObservation:
     pointcloud: Optional[np.ndarray] = None
     visible_objects: Optional[Set[str]] = None
     
+    # Scene graph info - objects with distances
+    visible_object_info: Optional[List[ObjectInfo]] = None  # Objects with distances
+    
+    def get_objects_with_distances(self) -> Dict[str, float]:
+        """Get dict of {object_category: min_distance}."""
+        if not self.visible_object_info:
+            return {}
+        
+        result = {}
+        for obj in self.visible_object_info:
+            if obj.category not in result or obj.distance < result[obj.category]:
+                result[obj.category] = obj.distance
+        return result
+    
+    def format_nearby_objects(self, max_objects: int = 15) -> str:
+        """Format nearby objects with distances for prompts."""
+        if not self.visible_object_info:
+            return "none visible"
+        
+        # Sort by distance and deduplicate by category
+        obj_distances = self.get_objects_with_distances()
+        sorted_objs = sorted(obj_distances.items(), key=lambda x: x[1])[:max_objects]
+        
+        if not sorted_objs:
+            return "none visible"
+        
+        return ", ".join(f"{cat} ({dist:.1f}m)" for cat, dist in sorted_objs)
+    
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
         return {
@@ -44,6 +84,7 @@ class ProcessedObservation:
             "yaw": self.yaw,
             "pointcloud": self.pointcloud,
             "visible_objects": self.visible_objects,
+            "visible_object_info": self.visible_object_info,
         }
 
 
@@ -94,7 +135,8 @@ class ObservationProcessor:
                 raw_obs: Dict[str, np.ndarray],
                 agent_position: np.ndarray,
                 agent_rotation: np.ndarray,
-                scene=None) -> ProcessedObservation:
+                scene=None,
+                pathfinder=None) -> ProcessedObservation:
         """
         Process raw observations into structured format.
         
@@ -103,6 +145,7 @@ class ObservationProcessor:
             agent_position: Agent position (x, y, z)
             agent_rotation: Agent rotation quaternion (x, y, z, w)
             scene: Optional scene wrapper for object lookup
+            pathfinder: Optional pathfinder for geodesic distance computation
             
         Returns:
             ProcessedObservation with all data
@@ -118,8 +161,14 @@ class ObservationProcessor:
         # Generate point cloud
         pointcloud = self.depth_to_pointcloud(depth)
         
-        # Detect visible objects
-        visible_objects = self.get_visible_objects(semantic, scene) if scene else None
+        # Detect visible objects with distances
+        visible_objects = None
+        visible_object_info = None
+        if scene:
+            visible_objects = self.get_visible_objects(semantic, scene)
+            visible_object_info = self.get_visible_objects_with_distance(
+                semantic, depth, agent_position, scene, pathfinder
+            )
         
         return ProcessedObservation(
             rgb=rgb,
@@ -130,6 +179,7 @@ class ObservationProcessor:
             yaw=yaw,
             pointcloud=pointcloud,
             visible_objects=visible_objects,
+            visible_object_info=visible_object_info,
         )
     
     def depth_to_pointcloud(self, depth: np.ndarray) -> np.ndarray:
@@ -209,6 +259,95 @@ class ObservationProcessor:
                     visible.add(obj.category)
         
         return visible
+    
+    def _get_geodesic_distance(self, 
+                               start_pos: np.ndarray, 
+                               end_pos: np.ndarray,
+                               pathfinder=None) -> float:
+        """
+        Compute geodesic distance between two positions.
+        
+        Args:
+            start_pos: Starting position (x, y, z)
+            end_pos: Ending position (x, y, z)
+            pathfinder: Optional pathfinder for geodesic computation
+            
+        Returns:
+            Geodesic distance (or Euclidean if pathfinder unavailable)
+        """
+        if pathfinder is not None:
+            try:
+                path = pathfinder.find_path(start_pos, end_pos)
+                if path.geodesic_distance < float('inf'):
+                    return float(path.geodesic_distance)
+            except Exception as e:
+                logger.debug(f"Pathfinder failed for object distance: {e}")
+        
+        # Fall back to Euclidean distance
+        return float(np.linalg.norm(start_pos - end_pos))
+    
+    def get_visible_objects_with_distance(self,
+                                          semantic: np.ndarray,
+                                          depth: np.ndarray,
+                                          agent_position: np.ndarray,
+                                          scene,
+                                          pathfinder=None) -> List[ObjectInfo]:
+        """
+        Get visible objects with their geodesic distances from the agent.
+        
+        Args:
+            semantic: Semantic segmentation image (H, W) or (H, W, 1)
+            depth: Depth image (H, W) or (H, W, 1)
+            agent_position: Agent position (x, y, z)
+            scene: Scene wrapper with object information
+            pathfinder: Optional pathfinder for geodesic distance computation
+            
+        Returns:
+            List of ObjectInfo with category, geodesic distance, position
+        """
+        if semantic.ndim == 3:
+            semantic = semantic.squeeze(-1)
+        if depth.ndim == 3:
+            depth = depth.squeeze(-1)
+        
+        object_infos = []
+        unique_ids = np.unique(semantic)
+        
+        # Structural objects to filter
+        excluded = {"wall", "floor", "ceiling", "void", "unknown", "misc"}
+        
+        for obj_id in unique_ids:
+            if obj_id == 0:
+                continue
+            
+            obj = scene.get_object_by_id(int(obj_id)) if hasattr(scene, 'get_object_by_id') else None
+            if not obj or not hasattr(obj, 'category'):
+                continue
+            
+            category = obj.category.lower()
+            if category in excluded or any(ex in category for ex in excluded):
+                continue
+            
+            # Check if object is visible in the semantic mask
+            obj_mask = semantic == obj_id
+            if not np.any(obj_mask):
+                continue
+            
+            # Use geodesic distance to the object position
+            obj_pos = obj.get_position()
+            distance = self._get_geodesic_distance(agent_position, obj_pos, pathfinder)
+            
+            object_infos.append(ObjectInfo(
+                category=obj.category,
+                distance=distance,
+                position=obj_pos,
+                obj_id=int(obj_id)
+            ))
+        
+        # Sort by distance
+        object_infos.sort(key=lambda x: x.distance)
+        
+        return object_infos
     
     def get_depth_at_center(self, depth: np.ndarray) -> float:
         """Get depth value at image center."""

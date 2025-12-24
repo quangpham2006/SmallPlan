@@ -10,7 +10,7 @@ from typing import Dict, Any
 import numpy as np
 
 from .base import BaseAgent, AgentState
-from ..utils.actions import Action, HighLevelAction
+from ..utils.actions import Action
 from ..core.observations import ProcessedObservation
 
 logger = logging.getLogger(__name__)

@@ -1,14 +1,13 @@
 # Habitat Object Navigation Module
 
 A clean, modular implementation for LLM-based object navigation using Habitat-Sim.
-Follows [Nav-R1](https://github.com/AIGeeksGroup/Nav-R1) style action space and simulator conventions.
 
 ## Overview
 
 This module provides:
 - **ObjectNav Environment**: Episode-based navigation to find target objects
-- **Nav-R1 Compatible Actions**: Discrete action space (MOVE_FORWARD, TURN_LEFT, TURN_RIGHT, STOP)
-- **LLM Agent**: High-level navigation using language models
+- **Discrete Action Space**: Low-level navigation actions (MOVE_FORWARD, MOVE_BACKWARD, TURN_LEFT, TURN_RIGHT, STOP)
+- **LLM Agent**: Navigation using language models with geodesic distance information
 - **Baseline Agents**: Random agent for comparison
 
 ## Directory Structure
@@ -98,25 +97,15 @@ python -m src.habitat_nav.inference --agent llm-custom --api-url http://localhos
 
 ## Action Space
 
-Following Nav-R1 conventions:
-
 | Action | ID | Description |
 |--------|-----|-------------|
 | MOVE_FORWARD | 0 | Move forward 0.25 meters |
-| TURN_LEFT | 1 | Turn left 30 degrees |
-| TURN_RIGHT | 2 | Turn right 30 degrees |
-| STOP | 3 | Terminate episode |
+| MOVE_BACKWARD | 1 | Move backward 0.25 meters |
+| TURN_LEFT | 2 | Turn left 30 degrees |
+| TURN_RIGHT | 3 | Turn right 30 degrees |
+| STOP | 4 | Terminate episode |
 
-## High-Level Actions
-
-For LLM agents, we provide semantic high-level actions:
-
-| Action | Example | Description |
-|--------|---------|-------------|
-| `goto(target)` | `goto(kitchen)` | Navigate to object/room |
-| `explore(room)` | `explore(bedroom)` | Explore unexplored areas |
-| `open(object)` | `open(door)` | Open door or container |
-| `stop()` | `stop()` | Terminate task |
+The LLM agent outputs low-level actions directly (e.g., `Action: MOVE_FORWARD`).
 
 ## API Usage
 
@@ -169,9 +158,9 @@ llm_api_type: openai      # openai or custom
 llm_model: gpt-4o         # Model name
 llm_temperature: 0.7      # Sampling temperature
 
-# Nav-R1 compatible settings
-forward_step_size: 0.25   # Nav-R1 default (meters)
-turn_angle: 30.0          # Nav-R1 default (degrees)
+# Navigation settings
+forward_step_size: 0.25   # meters
+turn_angle: 30.0          # degrees
 success_distance: 1.5     # meters
 max_episode_steps: 500
 ```
@@ -184,7 +173,5 @@ max_episode_steps: 500
 
 ## References
 
-- [Nav-R1](https://github.com/AIGeeksGroup/Nav-R1) - Navigation with R1 reasoning
 - [Habitat-Lab](https://github.com/facebookresearch/habitat-lab) - Embodied AI platform
 - [Habitat-Sim](https://github.com/facebookresearch/habitat-sim) - High-performance simulator
-

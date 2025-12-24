@@ -28,8 +28,11 @@ class AgentState:
     # Visited locations
     visited_positions: List[np.ndarray] = field(default_factory=list)
     
-    # Observed objects
+    # Observed objects (by category name)
     seen_objects: set = field(default_factory=set)
+    
+    # Observed object IDs (to avoid duplicating the same physical object)
+    seen_object_ids: set = field(default_factory=set)
     
     # Task info
     target_category: str = ""
@@ -45,6 +48,7 @@ class AgentState:
         self.action_history = []
         self.visited_positions = []
         self.seen_objects = set()
+        self.seen_object_ids = set()
         self.target_category = target_category
         self.current_room = ""
         self.total_steps = 0
@@ -64,7 +68,17 @@ class AgentState:
         """Update state with new observation."""
         if obs.visible_objects:
             self.seen_objects.update(obs.visible_objects)
+        
+        # Track unique object IDs to avoid duplicating the same physical object
+        if obs.visible_object_info:
+            for obj_info in obs.visible_object_info:
+                self.seen_object_ids.add(obj_info.obj_id)
+        
         self.visited_positions.append(obs.position.copy())
+    
+    def has_seen_object(self, obj_id: int) -> bool:
+        """Check if we've already observed this specific object (by ID)."""
+        return obj_id in self.seen_object_ids
     
     def get_action_summary(self, max_actions: int = 5) -> str:
         """Get summary of recent actions."""
@@ -106,7 +120,7 @@ class BaseAgent(ABC):
     def act(self,
             observation: ProcessedObservation,
             task_description: str,
-            info: Dict[str, Any]) -> Action | HighLevelAction:
+            info: Dict[str, Any]):
         """
         Select an action given the current observation.
         
@@ -116,7 +130,7 @@ class BaseAgent(ABC):
             info: Additional info from environment
             
         Returns:
-            Action to execute (low-level Action or HighLevelAction)
+            Action or HighLevelAction to execute
         """
         raise NotImplementedError
     
@@ -131,9 +145,8 @@ class BaseAgent(ABC):
         raise NotImplementedError
     
     def update(self, 
-               action: Action | HighLevelAction,
+               action,
                observation: ProcessedObservation,
-               reward: float,
                info: Dict[str, Any]):
         """
         Update agent after taking an action.
@@ -141,7 +154,6 @@ class BaseAgent(ABC):
         Args:
             action: Action that was taken
             observation: Resulting observation
-            reward: Reward received
             info: Environment info
         """
         self.state.add_observation(observation)

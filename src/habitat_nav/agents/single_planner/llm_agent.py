@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import requests
 
-from .base import BaseAgent, AgentState
+from ..base import BaseAgent, AgentState
 from .prompts import (
     LOW_LEVEL_SYSTEM_PROMPT, LOW_LEVEL_USER_PROMPT,
     HIGH_LEVEL_SYSTEM_PROMPT, HIGH_LEVEL_USER_PROMPT,
@@ -23,8 +23,8 @@ from .prompts import (
     format_action_history, get_decision_guidance, format_retry_prompt,
     count_recent_failures, check_target_in_objects, format_discovered_rooms
 )
-from ..utils.actions import Action, ActionSpace, HighLevelAction, HighLevelActionSpace
-from ..core.observations import ProcessedObservation
+from ...utils.actions import Action, ActionSpace, HighLevelAction, HighLevelActionSpace
+from ...core.observations import ProcessedObservation
 
 logger = logging.getLogger(__name__)
 

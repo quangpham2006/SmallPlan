@@ -57,6 +57,10 @@ class SimulatorConfig:
     depth_min: float = 0.0
     depth_max: float = 10.0
     
+    # Collision detection settings
+    collision_distance_threshold: float = 0.3  # Minimum safe distance in meters
+    enable_collision_detection: bool = True    # Use depth sensor for collision detection
+    
     # Render mode
     enable_physics: bool = True
     
@@ -175,6 +179,10 @@ class HabitatSimulator:
                 "move_forward",
                 habitat_sim.ActuationSpec(amount=self.config.forward_step_size)
             ),
+            "move_backward": habitat_sim.ActionSpec(
+                "move_backward",
+                habitat_sim.ActuationSpec(amount=self.config.forward_step_size)
+            ),
             "turn_left": habitat_sim.ActionSpec(
                 "turn_left", 
                 habitat_sim.ActuationSpec(amount=self.config.turn_angle)
@@ -234,24 +242,45 @@ class HabitatSimulator:
     
     def step(self, action: Action | int) -> Dict[str, np.ndarray]:
         """
-        Execute an action and return observations.
+        Execute an action and return observations with collision information.
         
         Args:
-            action: Action to execute (Action enum or int 0-3)
+            action: Action to execute (Action enum or int 0-4)
             
         Returns:
             Dictionary with 'rgb', 'depth', 'semantic' observations
+            and 'collision' boolean indicating if a collision occurred
         """
         if isinstance(action, int):
             action = Action(action)
         
         if action == Action.STOP:
             # STOP doesn't change state, just return current observations
-            return self.get_observations()
+            obs = self.get_observations()
+            obs['collision'] = False
+            return obs
+        
+        # Store position before action for collision detection
+        pre_position, _ = self.get_agent_state()
         
         habitat_action = self.action_space.get_habitat_action(action)
         self._sim.step(habitat_action)
-        return self.get_observations()
+        
+        obs = self.get_observations()
+        
+        # Detect collision by checking if position changed for forward/backward movement
+        collision = False
+        if action in (Action.MOVE_FORWARD, Action.MOVE_BACKWARD) and self.config.enable_collision_detection:
+            post_position, _ = self.get_agent_state()
+            distance_moved = np.linalg.norm(post_position - pre_position)
+            # If barely moved (< 10% of expected step), it's a collision
+            expected_step = self.config.forward_step_size
+            if distance_moved < expected_step * 0.1:
+                collision = True
+                logger.debug(f"Collision detected: moved {distance_moved:.4f}m vs expected {expected_step:.4f}m")
+        
+        obs['collision'] = collision
+        return obs
     
     def get_observations(self) -> Dict[str, np.ndarray]:
         """
@@ -335,6 +364,148 @@ class HabitatSimulator:
         r = R.from_quat(quat)
         euler = r.as_euler('xyz')
         return euler[1]  # Y-axis rotation
+    
+    def get_depth_at_center(self, depth: Optional[np.ndarray] = None) -> float:
+        """
+        Get depth value at the center of the depth image.
+        
+        Args:
+            depth: Optional depth image. If None, gets current observation.
+            
+        Returns:
+            Depth value in meters at image center
+        """
+        if depth is None:
+            obs = self.get_observations()
+            depth = obs['depth']
+        
+        if depth.ndim == 3:
+            depth = depth.squeeze(-1)
+        
+        cy = depth.shape[0] // 2
+        cx = depth.shape[1] // 2
+        
+        # Average over small region for robustness
+        region = depth[max(0, cy-2):cy+2, max(0, cx-2):cx+2]
+        return float(np.nanmean(region))
+    
+    def is_obstacle_ahead(self, threshold: Optional[float] = None) -> bool:
+        """
+        Check if there's an obstacle directly ahead using depth sensor.
+        
+        Args:
+            threshold: Distance threshold in meters. If None, uses config value.
+            
+        Returns:
+            True if obstacle is closer than threshold
+        """
+        if threshold is None:
+            threshold = self.config.collision_distance_threshold
+        
+        center_depth = self.get_depth_at_center()
+        
+        # Valid obstacle: closer than threshold but not too close (sensor noise)
+        return self.config.depth_min < center_depth < threshold
+    
+    def will_collide(self, action: Action | int) -> bool:
+        """
+        Predict if executing an action will result in a collision.
+        
+        Uses depth sensor to check for obstacles before movement.
+        
+        Args:
+            action: Action to check
+            
+        Returns:
+            True if action would likely result in collision
+        """
+        if isinstance(action, int):
+            action = Action(action)
+        
+        # Only movement actions can collide
+        if action not in (Action.MOVE_FORWARD, Action.MOVE_BACKWARD):
+            return False
+        
+        # Check if obstacle is within collision distance + step size
+        safe_distance = self.config.collision_distance_threshold + self.config.forward_step_size
+        center_depth = self.get_depth_at_center()
+        
+        return self.config.depth_min < center_depth < safe_distance
+    
+    def get_safe_action(self, action: Action | int) -> Action:
+        """
+        Get a safe action, avoiding collisions.
+        
+        If the requested action would cause a collision, returns a turn action instead.
+        
+        Args:
+            action: Requested action
+            
+        Returns:
+            Safe action (original action or turn to avoid collision)
+        """
+        if isinstance(action, int):
+            action = Action(action)
+        
+        # If action won't collide, return it as-is
+        if not self.will_collide(action):
+            return action
+        
+        # Collision predicted - find safe direction to turn
+        obs = self.get_observations()
+        depth = obs['depth']
+        if depth.ndim == 3:
+            depth = depth.squeeze(-1)
+        
+        h, w = depth.shape
+        mid_h = h // 2
+        
+        # Check left and right regions
+        left_region = depth[mid_h-20:mid_h+20, :w//3]
+        right_region = depth[mid_h-20:mid_h+20, 2*w//3:]
+        
+        left_valid = left_region[(left_region > 0.1) & (left_region < 10.0)]
+        right_valid = right_region[(right_region > 0.1) & (right_region < 10.0)]
+        
+        left_clearance = float(np.median(left_valid)) if len(left_valid) > 0 else 0.0
+        right_clearance = float(np.median(right_valid)) if len(right_valid) > 0 else 0.0
+        
+        # Turn towards more open direction
+        if left_clearance > right_clearance:
+            return Action.TURN_LEFT
+        else:
+            return Action.TURN_RIGHT
+    
+    def get_forward_clearance(self) -> float:
+        """
+        Get the clearance distance in the forward direction.
+        
+        Returns:
+            Distance to nearest obstacle in front (meters)
+        """
+        return self.get_depth_at_center()
+    
+    def get_collision_info(self) -> Dict[str, Any]:
+        """
+        Get detailed collision/obstacle information from depth sensor.
+        
+        Returns:
+            Dictionary with:
+                - 'obstacle_ahead': bool, if obstacle is within collision threshold
+                - 'forward_clearance': float, distance to obstacle in front
+                - 'safe_to_move_forward': bool, if forward movement is safe
+                - 'collision_threshold': float, configured threshold
+        """
+        center_depth = self.get_depth_at_center()
+        threshold = self.config.collision_distance_threshold
+        safe_distance = threshold + self.config.forward_step_size
+        
+        return {
+            'obstacle_ahead': self.config.depth_min < center_depth < threshold,
+            'forward_clearance': center_depth,
+            'safe_to_move_forward': center_depth >= safe_distance or center_depth <= self.config.depth_min,
+            'collision_threshold': threshold,
+        }
     
     @property
     def semantic_scene(self):
