@@ -40,8 +40,14 @@ class NarratorState:
     # Each record: (action, argument, success, feedback, room_before, room_after, discoveries)
     action_records: List[Tuple] = field(default_factory=list)
     
-    # Discovered rooms -> objects
+    # Discovered rooms -> objects (only classified rooms)
     discovered_rooms: Dict[str, List[str]] = field(default_factory=dict)
+    
+    # Count of rooms not yet classified
+    unclassified_room_count: int = 0
+    
+    # Target found flag - stops story updates once target is spotted
+    target_found: bool = False
     
     # Story update counter (for controlling update frequency)
     story_update_counter: int = 0
@@ -58,6 +64,8 @@ class NarratorState:
         self.current_room = ""
         self.action_records = []
         self.discovered_rooms = {}
+        self.unclassified_room_count = 0
+        self.target_found = False
         self.story_update_counter = 0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
@@ -243,6 +251,10 @@ class NarratorAgent:
         Returns:
             Story narrative string
         """
+        # If target already found, don't update story anymore
+        if self.state.target_found:
+            return self.state.current_story
+        
         # Check if we should generate a new story
         should_update = (
             force_update or
@@ -280,6 +292,24 @@ class NarratorAgent:
             self.state.current_story = fallback
             return fallback
     
+    def mark_target_found(self, target_name: str):
+        """
+        Mark that the target object has been found.
+        Replaces the story with a clear directive and freezes further updates.
+        
+        Args:
+            target_name: Name of the target object that was found
+        """
+        if self.state.target_found:
+            return  # Already marked
+        
+        self.state.target_found = True
+        
+        # REPLACE story entirely with clear action directive
+        self.state.current_story = f"TARGET SPOTTED: {target_name}. Call goto({target_name}) to navigate to it, then call stop() to complete the task."
+        
+        logger.info(f"Narrator: Target '{target_name}' found. Story replaced with action directive.")
+    
     def _generate_full_story(
         self,
         task_description: str,
@@ -294,7 +324,8 @@ class NarratorAgent:
             discovered_rooms=self.state.discovered_rooms,
             action_history=self.state.action_records,
             nearby_objects=nearby_objects,
-            unexplored_areas=unexplored_areas
+            unexplored_areas=unexplored_areas,
+            unclassified_room_count=self.state.unclassified_room_count
         )
         
         return self._query_llm(system_prompt, user_prompt)

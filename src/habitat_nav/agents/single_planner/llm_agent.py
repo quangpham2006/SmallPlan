@@ -363,16 +363,13 @@ class LLMAgent(BaseAgent):
             logger.info("--- SYSTEM PROMPT ---")
             # Log first few lines of system prompt (it can be long)
             system_lines = system_prompt.strip().split('\n')
-            for line in system_lines[:10]:
-                logger.info(line)
-            if len(system_lines) > 10:
-                logger.info(f"... ({len(system_lines) - 10} more lines)")
+            print(system_lines)
         
-        logger.info("--- USER PROMPT ---")
-        logger.info(user_prompt)
+        print("--- USER PROMPT ---")
+        print(user_prompt)
         
-        logger.info("--- LLM RESPONSE ---")
-        logger.info(response)
+        print("--- LLM RESPONSE ---")
+        print(response)
         
         if action is not None:
             logger.info(f"--- PARSED ACTION ---")

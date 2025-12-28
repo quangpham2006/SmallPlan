@@ -6,6 +6,7 @@ Wraps the simulator and provides episode management.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, List, Any
 
@@ -154,6 +155,17 @@ class EpisodeInfo:
     # Track if target was reached during episode (for success on stop())
     target_reached: bool = False
     
+    # Track if target was observed (in visible_objects) during episode
+    # This is the primary success condition - task succeeds when target is observed
+    target_observed: bool = False
+    
+    # Metrics captured at the moment target was first observed
+    # These are used for final metrics calculation (SPL, etc.)
+    distance_at_observation: Optional[float] = None
+    step_count_at_observation: Optional[int] = None
+    high_level_step_at_observation: Optional[int] = None
+    observation_time: Optional[float] = None  # Time when target was first observed
+    
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
         return {
@@ -168,6 +180,11 @@ class EpisodeInfo:
             "done": self.done,
             "shortest_path_distance": self.shortest_path_distance,
             "target_reached": self.target_reached,
+            "target_observed": self.target_observed,
+            "distance_at_observation": self.distance_at_observation,
+            "step_count_at_observation": self.step_count_at_observation,
+            "high_level_step_at_observation": self.high_level_step_at_observation,
+            "observation_time": self.observation_time,
         }
 
 
@@ -464,12 +481,22 @@ class ObjectNavEnv:
         return obs, reward, info
     
     def get_info(self) -> Dict:
-        """Get current episode info without taking an action."""
+        """Get current episode info without taking an action.
+        
+        Also checks for target observation and updates success status if target is visible.
+        """
         position, rotation = self.simulator.get_agent_state()
         raw_obs = self.simulator.get_observations()
         obs = self.obs_processor.process(
             raw_obs, position, rotation, self.scene, self.simulator.pathfinder
         )
+        
+        # Check for target observation and update success status
+        # This ensures success is properly tracked even for high-level actions
+        # that bypass env.step()
+        if not self.episode_info.success:
+            self._check_and_mark_observation(obs)
+        
         current_room = self._detect_current_room(obs)
         frontier_info = self._compute_frontier_info(obs)
         
@@ -806,31 +833,59 @@ class ObjectNavEnv:
             # Fallback without cv2
             self.rgb_frames.append(obs.rgb.copy())
     
+    def _check_and_mark_observation(self, obs: ProcessedObservation) -> bool:
+        """
+        Check if target is visible and mark it as observed.
+        
+        This is the primary success condition - task succeeds when target is observed.
+        When first observed, capture metrics (distance, steps, time) at that moment.
+        
+        Args:
+            obs: Current processed observation
+            
+        Returns:
+            True if target is visible in current observation
+        """
+        target = self.episode_info.target_category
+        
+        if obs.visible_objects:
+            target_lower = target.lower()
+            for visible_obj in obs.visible_objects:
+                if target_lower in visible_obj.lower():
+                    # Target is visible - mark as observed if not already
+                    if not self.episode_info.target_observed:
+                        self.episode_info.target_observed = True
+                        self.episode_info.success = True
+                        # Capture metrics at moment of observation
+                        self.episode_info.distance_at_observation = self.episode_info.distance_travelled
+                        self.episode_info.step_count_at_observation = self.episode_info.step_count
+                        self.episode_info.high_level_step_at_observation = self.episode_info.high_level_step_count
+                        self.episode_info.observation_time = time.time()
+                        logger.info(f"SUCCESS! Target '{target}' observed! "
+                                  f"Metrics captured: distance={self.episode_info.distance_at_observation:.2f}m, "
+                                  f"steps={self.episode_info.step_count_at_observation}")
+                    return True
+        
+        return False
+    
     def _check_success(self, obs: ProcessedObservation) -> bool:
         """
         Check if the navigation task is successful.
         
         Success is True if:
-        - Target category is visible in current observations, OR
-        - Target was successfully reached earlier (target_reached flag set)
+        - Target was already observed earlier (target_observed flag set), OR
+        - Target was successfully reached earlier (target_reached flag set), OR
+        - Target category is visible in current observations
         
         The target_reached flag is set by mark_target_reached() when a goto action
         successfully navigates to the target (called from inference.py).
         """
-        # First check if target was already reached during episode
-        if self.episode_info.target_reached:
+        # Check if target was already observed or reached during episode
+        if self.episode_info.target_observed or self.episode_info.target_reached:
             return True
         
-        target = self.episode_info.target_category
-        
-        # Check if target is visible now (case-insensitive partial match)
-        if obs.visible_objects:
-            target_lower = target.lower()
-            for visible_obj in obs.visible_objects:
-                if target_lower in visible_obj.lower():
-                    return True
-        
-        return False
+        # Check if target is visible now and mark as observed
+        return self._check_and_mark_observation(obs)
     
     def mark_target_reached(self):
         """
@@ -980,6 +1035,9 @@ class ObjectNavEnv:
         Compute Success weighted by Path Length (SPL).
         
         SPL = success * (shortest_path / max(shortest_path, actual_path))
+        
+        Uses distance_at_observation if target was observed (success by observation),
+        otherwise uses total distance_travelled.
         """
         if not self.episode_info or not self.episode_info.success:
             return 0.0
@@ -988,7 +1046,13 @@ class ObjectNavEnv:
         if shortest is None or shortest <= 0:
             return 0.0
         
-        actual = self.episode_info.distance_travelled
+        # Use distance at observation time if available (success by observation)
+        # Otherwise use total distance travelled
+        if self.episode_info.target_observed and self.episode_info.distance_at_observation is not None:
+            actual = self.episode_info.distance_at_observation
+        else:
+            actual = self.episode_info.distance_travelled
+        
         return max(0.0, shortest / max(shortest, actual))
     
     def save_video(self, output_path: str, fps: int = 10):

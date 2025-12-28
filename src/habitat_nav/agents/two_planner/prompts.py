@@ -20,16 +20,17 @@ MAIN_PLANNER_SYSTEM_PROMPT = """You are a robot navigating an unexplored house. 
 Available actions:
 {action_descriptions}
 
-Response format (follow strictly):
+Response format (follow STRICTLY):
 Analysis: Brief assessment of current situation and where the target might be.
 Reasoning: Why this specific action is the best choice right now.
 Command: function_name(argument)
 
 Important rules:
-- If you find the target object, call goto() to get close to the object.
+- If you see the target object in the visible objects list, immediately call stop(). You do not need to navigate to it or interact with it.
 - Learn from failed actions - don't repeat the same failing action.
 - When stuck, try opening doors to discover new rooms.
-- Use the exploration story to understand your journey and avoid repeating mistakes.
+- Use exact object/room names as shown in the visible objects or discovered rooms list.
+- Use the journey summary to understand your exploration progress.
 """
 
 # =============================================================================
@@ -89,66 +90,53 @@ What action should you take next?"""
 # NARRATOR/STORYTELLER LLM - SYSTEM PROMPT
 # =============================================================================
 
-NARRATOR_SYSTEM_PROMPT = """You are a narrative assistant helping a robot understand its exploration journey.
-Your task is to summarize the robot's previous actions and observations in a clear, story-like manner.
+NARRATOR_SYSTEM_PROMPT = """You are a narrator telling the story of a robot's exploration journey through a house.
 
-Guidelines:
-- Write in second person ("You did X", "You found Y")
-- Focus on what the robot discovered, where it went, and what it tried
-- Highlight relevant findings that might help with the current task
-- Keep the narrative concise but informative (3-5 sentences typically)
-- Mention failed actions and what was learned from them
-- Connect observations to potential next steps
+Write a short, engaging narrative (3-4 sentences) in second person that:
+- Describes where the robot started and what rooms it has visited
+- Mentions key objects or discoveries along the way
+- Notes the robot's current location
 
-The summary should help the robot remember its journey and make better decisions."""
+Style: Write like a storybook narrator. Be vivid but concise. 
+Do NOT give advice or suggestions - only describe what has happened."""
 
 # =============================================================================
 # NARRATOR LLM - USER PROMPTS
 # =============================================================================
 
-# Initial story generation prompt
-NARRATOR_USER_PROMPT = """The robot is tasked with: {task_description}
+# Journey summary prompt
+NARRATOR_USER_PROMPT = """The robot is searching for: {task_description}
 
-=== EXPLORATION JOURNEY ===
 Starting location: {starting_room}
 Current location: {current_room}
 
-=== ROOMS DISCOVERED ===
+Rooms explored and their contents:
 {discovered_rooms}
 
-=== ACTION HISTORY (oldest to newest) ===
-{action_history}
+Tell the story of this exploration journey in 3-4 sentences. Describe where the robot started, what rooms it visited, what interesting objects it found, and where it is now."""
 
-=== CURRENT OBSERVATIONS ===
-Nearby objects: {nearby_objects}
-Unexplored areas: {unexplored_areas}
-
-Please provide a brief narrative summary (3-5 sentences) of the robot's exploration journey so far.
-Focus on what it has tried, what it found, and any patterns or insights that might help with the task."""
-
-# Story update prompt (for incremental updates)
-NARRATOR_UPDATE_PROMPT = """The robot just took a new action.
-
-Previous summary: {previous_summary}
+# Journey update prompt (for incremental updates)
+NARRATOR_UPDATE_PROMPT = """Previous summary:
+{previous_summary}
 
 New action: {new_action}
-Action result: {action_result}
-New observations: {new_observations}
+Result: {action_result}
+Observations: {new_observations}
 
-Please update the narrative summary to include this new development. Keep the total summary to 3-6 sentences."""
+Update the journey summary to include this new development. Keep it to 3-5 sentences total."""
 
 # =============================================================================
-# STORY SECTION FORMATTING
+# JOURNEY SUMMARY SECTION FORMATTING
 # =============================================================================
 
-STORY_SECTION_HEADER = "=== EXPLORATION STORY ==="
+STORY_SECTION_HEADER = "=== EXPLORATION CONTEXT ==="
 
-STORY_SECTION_TEMPLATE = """=== EXPLORATION STORY ===
+STORY_SECTION_TEMPLATE = """=== EXPLORATION CONTEXT ===
 {story_content}
 
 """
 
-STORY_EMPTY = "You have just started your exploration."
+STORY_EMPTY = "You have just begun exploring the house."
 
 # =============================================================================
 # ACTION HISTORY FORMATTING
@@ -170,26 +158,26 @@ STORY_ACTION_DISCOVERIES = " [discovered: {discoveries}]"
 # =============================================================================
 
 GUIDANCE_TARGET_FOUND = """🎯 TARGET FOUND! The target "{target}" is in the visible objects list.
-→ Call goto({target}) to get close and complete the task."""
+→ Immediately call stop() to complete the task. You do not need to navigate to it or interact with it."""
 
 GUIDANCE_REPEATED_FAILURES = """⚠️ Recent actions have been failing repeatedly.
 → Try a DIFFERENT approach: open a door, explore a different room, or use a different target.
-→ Review the exploration story above to avoid repeating past mistakes.
+→ Review the journey summary to avoid repeating mistakes.
 → If you struggle too long and cannot find the target, call stop() to terminate the task."""
 
 GUIDANCE_ALL_EXPLORED = """All discovered rooms have been fully explored but target not found.
 → Focus on opening closed doors to discover new rooms that may contain the target.
-→ Check the exploration story - you may have missed something."""
+→ Review the journey summary - you may have missed something."""
 
 GUIDANCE_UNEXPLORED = """There are still unexplored areas in discovered rooms.
 → Consider exploring rooms with unexplored areas OR opening doors to find new rooms.
-→ Use the exploration story to prioritize areas you haven't thoroughly checked."""
+→ Use the journey summary to prioritize areas you haven't checked."""
 
 GUIDANCE_DEFAULT = """Choose the most efficient action to find the target:
 - If target is in visible objects → goto(target)
 - If target might be in unexplored areas → explore(room)
 - If target might be behind closed doors → open(door)
-- Review the exploration story for context on what you've tried."""
+- Review the journey summary for context."""
 
 # =============================================================================
 # RETRY/FAILURE PROMPTS
@@ -201,7 +189,7 @@ Please choose a different action. Consider:
 - Trying a different target (door, room, or object)
 - Using a different action type
 - The target might be inaccessible from your current position
-- Review the exploration story for alternative approaches
+- Review the journey summary for alternative approaches
 
 Remember to include "Command:" before your action."""
 
@@ -211,7 +199,7 @@ Tips:
 - Don't repeat the exact same action that just failed
 - Try a different target or action type
 - Check if there are alternative paths or objects
-- Think about what the exploration story tells you about this area
+- Review the journey summary for what you've tried
 
 Remember to include "Command:" before your action."""
 
@@ -413,17 +401,27 @@ def format_action_for_narrator(
     return line
 
 
-def format_discovered_rooms_for_narrator(room_dict: Dict[str, List[str]], max_objects: int = 10) -> str:
-    """Format discovered rooms for narrator prompt."""
+def format_discovered_rooms_for_narrator(room_dict: Dict[str, List[str]], max_objects: int = 6) -> str:
+    """Format discovered rooms for narrator prompt, filtering out raw room IDs."""
     if not room_dict:
-        return "No rooms discovered yet."
+        return "No rooms identified yet."
     
     lines = []
     for room, objects in room_dict.items():
-        obj_list = ", ".join(objects[:max_objects])
-        if len(objects) > max_objects:
-            obj_list += f" (and {len(objects) - max_objects} more)"
-        lines.append(f"- {room}: [{obj_list}]")
+        # Skip raw room IDs (like room-0_1)
+        if room.startswith("room-"):
+            continue
+        
+        if objects:
+            key_objects = ", ".join(objects[:max_objects])
+            if len(objects) > max_objects:
+                key_objects += ", etc."
+            lines.append(f"- {room}: {key_objects}")
+        else:
+            lines.append(f"- {room}: (being explored)")
+    
+    if not lines:
+        return "Still mapping the house..."
     
     return "\n".join(lines)
 
@@ -444,14 +442,14 @@ def format_action_history_for_narrator(action_records: list) -> str:
             room_after = record.get('room_after', '')
             discoveries = record.get('new_discoveries', [])
         elif isinstance(record, tuple):
-            # Handle tuple format: (action, argument, success, feedback)
+            # Handle tuple format: (action, argument, success, feedback, room_before, room_after, discoveries)
             action = record[0] if len(record) > 0 else 'unknown'
             argument = record[1] if len(record) > 1 else ''
             success = record[2] if len(record) > 2 else False
             feedback = record[3] if len(record) > 3 else ''
-            room_before = ''
-            room_after = ''
-            discoveries = []
+            room_before = record[4] if len(record) > 4 else ''
+            room_after = record[5] if len(record) > 5 else ''
+            discoveries = record[6] if len(record) > 6 else []
         else:
             action = getattr(record, 'action', 'unknown')
             argument = getattr(record, 'argument', '')
@@ -475,44 +473,56 @@ def format_action_history_for_narrator(action_records: list) -> str:
     return "\n".join(lines)
 
 
+def _is_classified_room(room_name: str) -> bool:
+    """Check if a room name is classified (not a raw ID like room-0_1)."""
+    if not room_name:
+        return False
+    return not room_name.startswith("room-")
+
+
 def generate_fallback_story(
     starting_room: str,
     current_room: str,
     action_records: list
 ) -> str:
-    """Generate a simple fallback story without LLM (for error cases)."""
+    """Generate a simple fallback narrative without LLM (for error cases)."""
     if not action_records:
         return STORY_EMPTY
     
-    lines = []
-    lines.append(f"You started in {starting_room or 'an unknown room'}.")
+    # Filter to only classified rooms
+    classified_rooms = set()
+    for r in action_records:
+        if isinstance(r, tuple) and len(r) > 5:
+            if r[4] and _is_classified_room(r[4]):
+                classified_rooms.add(r[4])
+            if r[5] and _is_classified_room(r[5]):
+                classified_rooms.add(r[5])
     
-    # Count action types
-    successful_explores = sum(1 for r in action_records 
-                             if (r[0] if isinstance(r, tuple) else getattr(r, 'action', '')) == 'explore' 
-                             and (r[2] if isinstance(r, tuple) else getattr(r, 'success', False)))
+    if _is_classified_room(starting_room):
+        classified_rooms.add(starting_room)
+    if _is_classified_room(current_room):
+        classified_rooms.add(current_room)
     
-    successful_gotos = [r for r in action_records 
-                        if (r[0] if isinstance(r, tuple) else getattr(r, 'action', '')) == 'goto' 
-                        and (r[2] if isinstance(r, tuple) else getattr(r, 'success', False))]
+    # Build narrative
+    parts = []
     
-    failed_actions = sum(1 for r in action_records 
-                         if not (r[2] if isinstance(r, tuple) else getattr(r, 'success', True)))
+    if _is_classified_room(starting_room):
+        parts.append(f"You began your search in the {starting_room}.")
+    else:
+        parts.append("You began exploring the house.")
     
-    if successful_explores:
-        lines.append(f"You explored {successful_explores} area(s).")
+    if classified_rooms:
+        room_list = ", ".join(sorted(classified_rooms))
+        parts.append(f"So far you have discovered: {room_list}.")
     
-    if successful_gotos:
-        targets = [(r[1] if isinstance(r, tuple) else getattr(r, 'argument', '')) for r in successful_gotos[-3:]]
-        lines.append(f"You navigated to: {', '.join(targets)}.")
+    if _is_classified_room(current_room):
+        parts.append(f"You are currently in the {current_room}.")
     
-    if failed_actions:
-        lines.append(f"Some actions failed ({failed_actions} total).")
+    num_actions = len(action_records)
+    if num_actions > 0:
+        parts.append(f"You have taken {num_actions} actions in your search.")
     
-    if current_room:
-        lines.append(f"You are currently in {current_room}.")
-    
-    return " ".join(lines)
+    return " ".join(parts) if parts else STORY_EMPTY
 
 
 # =============================================================================
@@ -526,7 +536,8 @@ def build_narrator_prompt(
     discovered_rooms: Dict[str, List[str]],
     action_history: list,
     nearby_objects: List[str],
-    unexplored_areas: List[str]
+    unexplored_areas: List[str],
+    unclassified_room_count: int = 0
 ) -> tuple:
     """
     Build system and user prompts for narrator.
@@ -534,14 +545,15 @@ def build_narrator_prompt(
     Returns:
         Tuple of (system_prompt, user_prompt)
     """
+    # Filter room names - use "the house" for raw IDs
+    display_starting = starting_room if not starting_room.startswith("room-") else "an unexplored area"
+    display_current = current_room if not current_room.startswith("room-") else "an unexplored area"
+    
     user_prompt = NARRATOR_USER_PROMPT.format(
         task_description=task_description,
-        starting_room=starting_room or "unknown",
-        current_room=current_room or "unknown",
-        discovered_rooms=format_discovered_rooms_for_narrator(discovered_rooms),
-        action_history=format_action_history_for_narrator(action_history),
-        nearby_objects=", ".join(nearby_objects) if nearby_objects else "none visible",
-        unexplored_areas=", ".join(unexplored_areas) if unexplored_areas else "none"
+        starting_room=display_starting or "unknown",
+        current_room=display_current or "unknown",
+        discovered_rooms=format_discovered_rooms_for_narrator(discovered_rooms)
     )
     
     return NARRATOR_SYSTEM_PROMPT, user_prompt

@@ -22,8 +22,8 @@ Thought: Analyze the current scene graph and reason about where the target might
 Action: function_name(argument)
 
 Important navigation rules:
-1. Use semantic reasoning about room types - e.g., a "bed" is likely in a "bedroom"
-2. If you see the target object, navigate directly to it
+1. If you see the target object in the visible objects list, immediately call done(). You do not need to navigate to it or interact with it.
+2. Use semantic reasoning about room types - e.g., a "bed" is likely in a "bedroom"
 3. Explore rooms that are likely to contain the target based on their type
 4. Open closed doors to discover new rooms when current rooms are exhausted
 5. Learn from failed actions - do not repeat the same failing action
@@ -235,7 +235,7 @@ def format_action_history(action_history: list, max_items: int = 5) -> str:
 # =============================================================================
 
 GUIDANCE_TARGET_FOUND = """TARGET VISIBLE: The "{target}" has been detected in your current view.
-→ Use navigate({target}) to approach it and complete the task."""
+→ Immediately call done() to complete the task. You do not need to navigate to it or interact with it."""
 
 GUIDANCE_SEMANTIC_SEARCH = """SEMANTIC SEARCH: Consider which room type would typically contain a "{target}".
 → Navigate to rooms of that type, or explore to discover more rooms."""

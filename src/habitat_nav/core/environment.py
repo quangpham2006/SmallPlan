@@ -6,6 +6,7 @@ Wraps the simulator and provides episode management.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, List, Any
 
@@ -154,6 +155,17 @@ class EpisodeInfo:
     # Track if target was reached during episode (for success on stop())
     target_reached: bool = False
     
+    # Track if target was observed (in visible_objects) during episode
+    # This is the primary success condition - task succeeds when target is observed
+    target_observed: bool = False
+    
+    # Metrics captured at the moment target was first observed
+    # These are used for final metrics calculation (SPL, etc.)
+    distance_at_observation: Optional[float] = None
+    step_count_at_observation: Optional[int] = None
+    high_level_step_at_observation: Optional[int] = None
+    observation_time: Optional[float] = None  # Time when target was first observed
+    
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
         return {
@@ -168,6 +180,11 @@ class EpisodeInfo:
             "done": self.done,
             "shortest_path_distance": self.shortest_path_distance,
             "target_reached": self.target_reached,
+            "target_observed": self.target_observed,
+            "distance_at_observation": self.distance_at_observation,
+            "step_count_at_observation": self.step_count_at_observation,
+            "high_level_step_at_observation": self.high_level_step_at_observation,
+            "observation_time": self.observation_time,
         }
 
 
@@ -199,6 +216,7 @@ class ObjectNavEnv:
                  config: Optional[Dict] = None,
                  max_episode_steps: int = 500,
                  success_distance: float = 1.5,
+                 min_geodesic_distance: float = 5.0,
                  seed: int = 42,
                  annotate_videos: bool = True):
         """
@@ -209,6 +227,7 @@ class ObjectNavEnv:
             config: Optional configuration dictionary
             max_episode_steps: Maximum steps per episode
             success_distance: Distance threshold for success (meters)
+            min_geodesic_distance: Minimum geodesic distance to target (meters)
             seed: Random seed for reproducibility
             annotate_videos: Whether to annotate video frames with object info
         """
@@ -216,6 +235,7 @@ class ObjectNavEnv:
         self.config = config or {}
         self.max_episode_steps = max_episode_steps
         self.success_distance = success_distance
+        self.min_geodesic_distance = min_geodesic_distance
         self.seed = seed
         self._annotate_videos_config = annotate_videos
         
@@ -281,12 +301,19 @@ class ObjectNavEnv:
         
         # Sample target if not provided
         if target_category is None:
-            target_category = self._sample_target_category()
+            target_category, sampled_dist = self._sample_target_category()
+        else:
+            sampled_dist = None
         
-        # Get shortest path distance for SPL
+        # Get shortest path distance for SPL (recompute for accuracy)
         shortest_dist = self._compute_shortest_path_distance(
             position, target_category
         )
+        if shortest_dist is None and sampled_dist is not None:
+            shortest_dist = sampled_dist
+        
+        # Find target position for logging
+        target_pos = self._get_nearest_target_position(target_category, position)
         
         # Create episode info
         episode_id = episode_id if episode_id is not None else self.episode_count
@@ -296,6 +323,7 @@ class ObjectNavEnv:
             target_category=target_category,
             target_description=f"Find a {target_category}",
             initial_position=position.copy(),
+            target_position=target_pos,
             shortest_path_distance=shortest_dist,
         )
         
@@ -330,9 +358,39 @@ class ObjectNavEnv:
             "frontier_info": frontier_info,
         }
         
-        logger.info(f"Reset episode {episode_id}: target='{target_category}'")
+        # Log task initialization
+        logger.info(f"=== TASK INIT: Episode {episode_id} ===")
+        logger.info(f"  Scene: {self.scene_id}")
+        logger.info(f"  Target: {target_category}")
+        logger.info(f"  Agent position: ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})")
+        if target_pos is not None:
+            logger.info(f"  Target position: ({target_pos[0]:.2f}, {target_pos[1]:.2f}, {target_pos[2]:.2f})")
+        logger.info(f"  Geodesic distance: {shortest_dist:.2f}m" if shortest_dist else "  Geodesic distance: N/A")
+        logger.info(f"  Min distance threshold: {self.min_geodesic_distance}m")
         
         return obs, info
+    
+    def _get_nearest_target_position(self, target_category: str, agent_pos: np.ndarray) -> Optional[np.ndarray]:
+        """Get the position of the nearest target object."""
+        all_targets = self.scene.get_objects_by_category(target_category)
+        if not all_targets:
+            return None
+        
+        agent_height = agent_pos[1]
+        targets = [t for t in all_targets if self._is_on_same_floor(t.get_position(), agent_height)]
+        
+        if not targets:
+            return None
+        
+        min_dist = float('inf')
+        nearest_pos = None
+        for t in targets:
+            dist = self._get_geodesic_distance(agent_pos, t.get_position())
+            if dist < min_dist:
+                min_dist = dist
+                nearest_pos = t.get_position()
+        
+        return nearest_pos
     
     def step(self, action: Action | int) -> Tuple[ProcessedObservation, float, Dict]:
         """
@@ -423,12 +481,22 @@ class ObjectNavEnv:
         return obs, reward, info
     
     def get_info(self) -> Dict:
-        """Get current episode info without taking an action."""
+        """Get current episode info without taking an action.
+        
+        Also checks for target observation and updates success status if target is visible.
+        """
         position, rotation = self.simulator.get_agent_state()
         raw_obs = self.simulator.get_observations()
         obs = self.obs_processor.process(
             raw_obs, position, rotation, self.scene, self.simulator.pathfinder
         )
+        
+        # Check for target observation and update success status
+        # This ensures success is properly tracked even for high-level actions
+        # that bypass env.step()
+        if not self.episode_info.success:
+            self._check_and_mark_observation(obs)
+        
         current_room = self._detect_current_room(obs)
         frontier_info = self._compute_frontier_info(obs)
         
@@ -460,19 +528,26 @@ class ObjectNavEnv:
         obj_height = obj_position[1]  # Y coordinate
         return abs(obj_height - agent_height) < floor_tolerance
     
-    def _sample_target_category(self) -> str:
-        """Sample a random target category from available objects on the same floor."""
+    def _sample_target_category(self) -> Tuple[str, float]:
+        """
+        Sample a random target category from available objects, ensuring minimum geodesic distance.
+        
+        Returns:
+            Tuple of (target_category, geodesic_distance_to_nearest_target)
+        """
         # Filter out structural categories
         excluded = {
             "wall", "floor", "ceiling", "void", "unknown", 
             "misc", "door", "window", "outdoor", "room"
         }
         
-        # Get agent's floor height
-        agent_height = self._get_agent_floor_height()
+        # Get agent position and floor height
+        agent_pos, _ = self.simulator.get_agent_state()
+        agent_height = agent_pos[1]
+        pathfinder = self.simulator.pathfinder
         
-        # Get categories with objects on the same floor
-        valid_categories = []
+        # Build list of (category, min_geodesic_distance) for valid targets
+        valid_targets = []
         for cat in self.scene.category_ids:
             cat_lower = cat.lower()
             
@@ -482,18 +557,44 @@ class ObjectNavEnv:
             if any(ex in cat_lower for ex in ["wall", "floor", "ceiling"]):
                 continue
             
-            # Check if any object of this category is on the same floor
+            # Get objects on the same floor with their geodesic distances
             objects = self.scene.get_objects_by_category(cat)
+            min_dist = float('inf')
             for obj in objects:
-                if self._is_on_same_floor(obj.get_position(), agent_height):
-                    valid_categories.append(cat)
-                    break  # At least one object on same floor
+                obj_pos = obj.get_position()
+                if not self._is_on_same_floor(obj_pos, agent_height):
+                    continue
+                
+                # Compute geodesic distance
+                dist = self._get_geodesic_distance(agent_pos, obj_pos)
+                if dist < min_dist:
+                    min_dist = dist
+            
+            # Only include if min distance meets threshold
+            if min_dist >= self.min_geodesic_distance and min_dist < float('inf'):
+                valid_targets.append((cat, min_dist))
         
-        if not valid_categories:
-            logger.warning("No valid target categories on same floor, using 'chair' as default")
-            return "chair"
+        if not valid_targets:
+            # Fallback: relax distance constraint and pick any valid category
+            logger.warning(f"No targets >= {self.min_geodesic_distance}m away, relaxing constraint")
+            for cat in self.scene.category_ids:
+                cat_lower = cat.lower()
+                if cat_lower in excluded or any(ex in cat_lower for ex in ["wall", "floor", "ceiling"]):
+                    continue
+                objects = self.scene.get_objects_by_category(cat)
+                for obj in objects:
+                    if self._is_on_same_floor(obj.get_position(), agent_height):
+                        dist = self._get_geodesic_distance(agent_pos, obj.get_position())
+                        valid_targets.append((cat, dist))
+                        break
         
-        return self.np_random.choice(valid_categories)
+        if not valid_targets:
+            logger.warning("No valid target categories found, using 'chair' as default")
+            return ("chair", 0.0)
+        
+        # Randomly select from valid targets
+        idx = self.np_random.randint(len(valid_targets))
+        return valid_targets[idx]
     
     def _compute_shortest_path_distance(self, 
                                         start_position: np.ndarray,
@@ -732,31 +833,59 @@ class ObjectNavEnv:
             # Fallback without cv2
             self.rgb_frames.append(obs.rgb.copy())
     
+    def _check_and_mark_observation(self, obs: ProcessedObservation) -> bool:
+        """
+        Check if target is visible and mark it as observed.
+        
+        This is the primary success condition - task succeeds when target is observed.
+        When first observed, capture metrics (distance, steps, time) at that moment.
+        
+        Args:
+            obs: Current processed observation
+            
+        Returns:
+            True if target is visible in current observation
+        """
+        target = self.episode_info.target_category
+        
+        if obs.visible_objects:
+            target_lower = target.lower()
+            for visible_obj in obs.visible_objects:
+                if target_lower in visible_obj.lower():
+                    # Target is visible - mark as observed if not already
+                    if not self.episode_info.target_observed:
+                        self.episode_info.target_observed = True
+                        self.episode_info.success = True
+                        # Capture metrics at moment of observation
+                        self.episode_info.distance_at_observation = self.episode_info.distance_travelled
+                        self.episode_info.step_count_at_observation = self.episode_info.step_count
+                        self.episode_info.high_level_step_at_observation = self.episode_info.high_level_step_count
+                        self.episode_info.observation_time = time.time()
+                        logger.info(f"SUCCESS! Target '{target}' observed! "
+                                  f"Metrics captured: distance={self.episode_info.distance_at_observation:.2f}m, "
+                                  f"steps={self.episode_info.step_count_at_observation}")
+                    return True
+        
+        return False
+    
     def _check_success(self, obs: ProcessedObservation) -> bool:
         """
         Check if the navigation task is successful.
         
         Success is True if:
-        - Target category is visible in current observations, OR
-        - Target was successfully reached earlier (target_reached flag set)
+        - Target was already observed earlier (target_observed flag set), OR
+        - Target was successfully reached earlier (target_reached flag set), OR
+        - Target category is visible in current observations
         
         The target_reached flag is set by mark_target_reached() when a goto action
         successfully navigates to the target (called from inference.py).
         """
-        # First check if target was already reached during episode
-        if self.episode_info.target_reached:
+        # Check if target was already observed or reached during episode
+        if self.episode_info.target_observed or self.episode_info.target_reached:
             return True
         
-        target = self.episode_info.target_category
-        
-        # Check if target is visible now (case-insensitive partial match)
-        if obs.visible_objects:
-            target_lower = target.lower()
-            for visible_obj in obs.visible_objects:
-                if target_lower in visible_obj.lower():
-                    return True
-        
-        return False
+        # Check if target is visible now and mark as observed
+        return self._check_and_mark_observation(obs)
     
     def mark_target_reached(self):
         """
@@ -906,6 +1035,9 @@ class ObjectNavEnv:
         Compute Success weighted by Path Length (SPL).
         
         SPL = success * (shortest_path / max(shortest_path, actual_path))
+        
+        Uses distance_at_observation if target was observed (success by observation),
+        otherwise uses total distance_travelled.
         """
         if not self.episode_info or not self.episode_info.success:
             return 0.0
@@ -914,7 +1046,13 @@ class ObjectNavEnv:
         if shortest is None or shortest <= 0:
             return 0.0
         
-        actual = self.episode_info.distance_travelled
+        # Use distance at observation time if available (success by observation)
+        # Otherwise use total distance travelled
+        if self.episode_info.target_observed and self.episode_info.distance_at_observation is not None:
+            actual = self.episode_info.distance_at_observation
+        else:
+            actual = self.episode_info.distance_travelled
+        
         return max(0.0, shortest / max(shortest, actual))
     
     def save_video(self, output_path: str, fps: int = 10):

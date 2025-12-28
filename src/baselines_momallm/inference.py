@@ -540,9 +540,24 @@ class InferenceRunner:
                     done = True
         
         # Compute metrics
-        episode_time = time.time() - episode_start_time
+        total_episode_time = time.time() - episode_start_time
         success = info["success"]
         spl = env.compute_spl()
+        
+        # Use observation-time metrics if target was observed
+        # This ensures metrics reflect the moment of success, not total episode duration
+        target_observed = info.get("target_observed", False)
+        if target_observed and info.get("observation_time") is not None:
+            # Use time at observation (relative to episode start)
+            episode_time = info["observation_time"] - episode_start_time
+            # Use distance at observation
+            distance_travelled = info.get("distance_at_observation", info["distance_travelled"])
+            # Use step count at observation
+            steps = info.get("step_count_at_observation", info["step_count"])
+        else:
+            episode_time = total_episode_time
+            distance_travelled = info["distance_travelled"]
+            steps = info["step_count"]
         
         if not success and not failure_reason:
             failure_reason = "target_not_found"
@@ -557,7 +572,7 @@ class InferenceRunner:
         # Log episode summary to console only
         self._log_episode_summary(
             env.scene_id, episode_idx, target, success, 
-            info["step_count"], spl, episode_time, failure_reason, agent
+            steps, spl, episode_time, failure_reason, agent
         )
         
         # Save video
@@ -575,8 +590,8 @@ class InferenceRunner:
             target_category=target,
             success=success,
             spl=spl,
-            steps=info["step_count"],
-            distance_travelled=info["distance_travelled"],
+            steps=steps,
+            distance_travelled=distance_travelled,
             episode_time=episode_time,
             geodesic_distance=geodesic_distance,
             initial_position=initial_position,

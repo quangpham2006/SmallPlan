@@ -20,7 +20,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -101,14 +101,19 @@ class InferenceConfig:
     """Configuration for inference run."""
     # Scene settings
     scene_ids: List[str] = field(default_factory=list)
-    dataset: str = "hm3d"
-    split: str = "test"
+    dataset: str = "hm3d"  # "hm3d", "mp3d", or "ovon"
+    split: str = "test"  # "train", "test", "val", "val_seen", "val_unseen" (last two for OVON)
+    
+    # OVON-specific settings
+    use_ovon_episodes: bool = False  # Whether to use OVON episode definitions
+    ovon_episodes_per_scene: int = 10  # Number of OVON episodes to run per scene
     
     # Episode settings
     num_episodes_per_scene: int = 3
     max_episode_steps: int = 500  # Max low-level steps (for low-level action mode)
     max_llm_queries: int = 100  # Max LLM queries (for high-level action mode)
     success_distance: float = 1.5
+    min_geodesic_distance: float = 5.0  # Min geodesic distance to target (ensures long-horizon tasks)
     
     # Agent settings
     agent_type: str = "llm"  # "llm", "llm-openai", "random"
@@ -155,6 +160,23 @@ class InferenceConfig:
         """Create config from command line args."""
         config = cls()
         
+        # Dataset and split settings
+        if hasattr(args, 'dataset') and args.dataset:
+            config.dataset = args.dataset
+        if hasattr(args, 'split') and args.split:
+            config.split = args.split
+            
+        # OVON-specific settings
+        if hasattr(args, 'ovon') and args.ovon:
+            config.dataset = "ovon"
+            config.use_ovon_episodes = True
+            # Default to val_seen for OVON
+            if not hasattr(args, 'split') or not args.split:
+                config.split = "val_seen"
+        if hasattr(args, 'ovon_episodes') and args.ovon_episodes:
+            config.ovon_episodes_per_scene = args.ovon_episodes
+        
+        # Scene selection
         if args.scene:
             config.scene_ids = [args.scene]
         elif args.scenes:
@@ -164,6 +186,8 @@ class InferenceConfig:
         
         if args.episodes:
             config.num_episodes_per_scene = args.episodes
+        if hasattr(args, 'min_distance') and args.min_distance:
+            config.min_geodesic_distance = args.min_distance
         if args.agent:
             config.agent_type = args.agent
             # Auto-detect OpenAI agent type
@@ -218,6 +242,9 @@ class EpisodeResult:
     steps: int
     distance_travelled: float
     episode_time: float = 0.0  # Time in seconds
+    geodesic_distance: Optional[float] = None  # Initial geodesic distance to target
+    initial_position: Optional[Tuple[float, float, float]] = None
+    target_position: Optional[Tuple[float, float, float]] = None
     failure_reason: Optional[str] = None
     video_path: Optional[str] = None
     final_interaction: Optional[Dict[str, Any]] = None  # Final LLM interaction
@@ -232,6 +259,7 @@ class EpisodeResult:
             "steps": self.steps,
             "distance_travelled": self.distance_travelled,
             "episode_time": self.episode_time,
+            "geodesic_distance": self.geodesic_distance,
             "failure_reason": self.failure_reason,
         }
 
@@ -420,6 +448,7 @@ class InferenceRunner:
             config=DEFAULT_CONFIG,
             max_episode_steps=self.config.max_episode_steps,
             success_distance=self.config.success_distance,
+            min_geodesic_distance=self.config.min_geodesic_distance,
             seed=self.config.seed,
             annotate_videos=self.config.annotate_videos
         )
@@ -465,6 +494,11 @@ class InferenceRunner:
         obs, info = env.reset(episode_id=episode_idx)
         target = info["target"]
         agent.reset(target_category=target)
+        
+        # Capture task initialization info
+        geodesic_distance = info.get("shortest_path_distance")
+        initial_position = tuple(env.episode_info.initial_position) if env.episode_info.initial_position is not None else None
+        target_position = tuple(env.episode_info.target_position) if env.episode_info.target_position is not None else None
         
         if action_executor:
             action_executor.reset()
@@ -555,9 +589,24 @@ class InferenceRunner:
                     done = True
         
         # Compute metrics
-        episode_time = time.time() - episode_start_time
+        total_episode_time = time.time() - episode_start_time
         success = info["success"]
         spl = env.compute_spl()
+        
+        # Use observation-time metrics if target was observed
+        # This ensures metrics reflect the moment of success, not total episode duration
+        target_observed = info.get("target_observed", False)
+        if target_observed and info.get("observation_time") is not None:
+            # Use time at observation (relative to episode start)
+            episode_time = info["observation_time"] - episode_start_time
+            # Use distance at observation
+            distance_travelled = info.get("distance_at_observation", info["distance_travelled"])
+            # Use step count at observation
+            steps = info.get("step_count_at_observation", info["step_count"])
+        else:
+            episode_time = total_episode_time
+            distance_travelled = info["distance_travelled"]
+            steps = info["step_count"]
         
         if not success and not failure_reason:
             failure_reason = "target_not_found"
@@ -572,7 +621,7 @@ class InferenceRunner:
         # Log episode summary to console only
         self._log_episode_summary(
             env.scene_id, episode_idx, target, success, 
-            info["step_count"], spl, episode_time, failure_reason, agent
+            steps, spl, episode_time, failure_reason, agent
         )
         
         # Save video
@@ -590,9 +639,12 @@ class InferenceRunner:
             target_category=target,
             success=success,
             spl=spl,
-            steps=info["step_count"],
-            distance_travelled=info["distance_travelled"],
+            steps=steps,
+            distance_travelled=distance_travelled,
             episode_time=episode_time,
+            geodesic_distance=geodesic_distance,
+            initial_position=initial_position,
+            target_position=target_position,
             failure_reason=failure_reason,
             video_path=video_path,
             final_interaction=final_interaction,
@@ -697,6 +749,18 @@ class InferenceRunner:
                 f.write("-" * 80 + "\n")
                 f.write(f"EPISODE {r.episode_id} | {r.scene_id} | Target: {r.target_category}\n")
                 f.write(f"Result: {status} | Steps: {r.steps} | SPL: {r.spl:.4f} | Time: {r.episode_time:.1f}s\n")
+                
+                # Task initialization info
+                f.write("\n>>> TASK INITIALIZATION:\n")
+                f.write("-" * 40 + "\n")
+                if r.initial_position:
+                    f.write(f"Agent Start: ({r.initial_position[0]:.2f}, {r.initial_position[1]:.2f}, {r.initial_position[2]:.2f})\n")
+                if r.target_position:
+                    f.write(f"Target Pos:  ({r.target_position[0]:.2f}, {r.target_position[1]:.2f}, {r.target_position[2]:.2f})\n")
+                if r.geodesic_distance is not None:
+                    f.write(f"Geodesic Distance: {r.geodesic_distance:.2f}m\n")
+                f.write(f"Min Distance Threshold: {self.config.min_geodesic_distance}m\n")
+                
                 if r.failure_reason:
                     f.write(f"Failure Reason: {r.failure_reason}\n")
                 f.write("-" * 80 + "\n\n")
@@ -758,6 +822,12 @@ Examples:
     # Run with OpenAI GPT-4o
     python -m src.habitat_nav.inference --agent llm-openai --model gpt-4o
     
+    # Run with OVON val_seen dataset
+    python -m src.habitat_nav.inference --ovon --split val_seen
+    
+    # Run with OVON val_unseen dataset
+    python -m src.habitat_nav.inference --dataset ovon --split val_unseen
+    
     # Run with two-planner (main planner + narrator)
     python -m src.habitat_nav.inference --planner two --action-level high
     
@@ -783,6 +853,37 @@ Examples:
     parser.add_argument("--scene", type=str, help="Single scene ID to run")
     parser.add_argument("--scenes", type=str, help="Comma-separated scene IDs")
     parser.add_argument("--episodes", type=int, default=5, help="Episodes per scene")
+    parser.add_argument(
+        "--min-distance",
+        type=float,
+        default=5.0,
+        help="Minimum geodesic distance to target in meters (ensures long-horizon tasks, default: 5.0)"
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=["hm3d", "mp3d", "ovon"],
+        default="hm3d",
+        help="Dataset to use (default: hm3d)"
+    )
+    parser.add_argument(
+        "--split",
+        choices=["train", "test", "val", "val_seen", "val_unseen"],
+        default="test",
+        help="Dataset split to use (val_seen/val_unseen for OVON, default: test)"
+    )
+    
+    # OVON-specific settings
+    parser.add_argument(
+        "--ovon",
+        action="store_true",
+        help="Use OVON dataset (shortcut for --dataset ovon --split val_seen)"
+    )
+    parser.add_argument(
+        "--ovon-episodes",
+        type=int,
+        default=10,
+        help="Number of OVON episodes per scene (default: 10)"
+    )
     
     # Agent settings
     parser.add_argument(

@@ -358,7 +358,7 @@ class TwoPlannerAgent(BaseAgent):
                 success=action_success,
                 feedback=feedback_reason,
                 room_before=room_before,
-                room_after=current_room,
+                room_after=self._get_room_display_name(current_room),
                 discoveries=discoveries
             )
             
@@ -370,12 +370,16 @@ class TwoPlannerAgent(BaseAgent):
         task_description: str,
         observation: ProcessedObservation
     ) -> str:
-        """Generate story from narrator."""
-        # Get visible objects and unexplored areas
+        """Generate journey summary from narrator."""
+        # If target already found, return frozen story
+        if self.narrator.state.target_found:
+            return self.narrator.get_current_story()
+        
+        # Get visible objects
         nearby_objects = list(observation.visible_objects) if observation.visible_objects else []
         unexplored_areas = self.frontier_info[:5] if self.frontier_info else []
         
-        # Update narrator with discovered rooms
+        # Prepare room info for narrator (same info as main planner)
         rooms_for_narrator = {}
         for room_id, obj_ids in self.room_objects.items():
             display_name = self._get_room_display_name(room_id)
@@ -384,12 +388,17 @@ class TwoPlannerAgent(BaseAgent):
         
         self.narrator.update_discovered_rooms(rooms_for_narrator)
         
-        # Generate story
+        # Generate journey summary
         story = self.narrator.generate_story(
             task_description=task_description,
             nearby_objects=nearby_objects,
             unexplored_areas=unexplored_areas
         )
+        
+        # Check if target is found in visible objects - mark AFTER generating story
+        if check_target_in_objects(self.state.target_category, nearby_objects):
+            self.narrator.mark_target_found(self.state.target_category)
+            story = self.narrator.get_current_story()
         
         return story
     
@@ -404,8 +413,11 @@ class TwoPlannerAgent(BaseAgent):
         # Track starting room
         if not self.starting_room:
             self.starting_room = current_room
-            self.narrator.state.starting_room = current_room
-            self.narrator.state.current_room = current_room
+            # Use display name for narrator (will be raw ID until classified)
+            self.narrator.state.starting_room = self._get_room_display_name(current_room)
+        
+        # Always update narrator's current room with display name
+        self.narrator.state.current_room = self._get_room_display_name(current_room)
         
         self.visited_rooms.add(current_room)
         

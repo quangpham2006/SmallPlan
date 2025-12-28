@@ -13,7 +13,7 @@ Reasoning: Why this specific action is the best choice right now.
 Command: function_name(argument)
 
 Important rules:
-- If you find the target object, call goto(target) to get close to the object.
+- If you see the target object in the visible objects list, immediately call stop(). You do not need to navigate to it or interact with it.
 - Learn from failed actions - don't repeat the same failing action.
 - When stuck, try opening doors to discover new rooms.
 - Use exact object/room names as shown in the visible objects or discovered rooms list.
@@ -111,7 +111,7 @@ ACTION_HISTORY_HEADER = "Recent actions (newest first):"
 
 # When target object is found
 GUIDANCE_TARGET_FOUND = """🎯 TARGET FOUND! The target "{target}" is in the visible objects list.
-→ Call goto({target}) to get close and complete the task."""
+→ Immediately call stop() to complete the task. You do not need to navigate to it or interact with it."""
 
 # When there are repeated failures
 GUIDANCE_REPEATED_FAILURES = """⚠️ Recent actions have been failing repeatedly.

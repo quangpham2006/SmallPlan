@@ -746,7 +746,7 @@ class LLMAgent(BaseAgent):
             exploration_status=exploration_status,
             decision_guidance=decision_guidance,
             target_object=self.state.target_category,
-            last_feedback=last_feedback
+            # last_feedback=last_feedback
         )
         
         # Update conversation for history

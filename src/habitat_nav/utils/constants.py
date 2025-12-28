@@ -106,14 +106,42 @@ MP3D_TEST_SCENES = [
 TRAINING_SCENES = HM3D_TRAINING_SCENES
 TEST_SCENES = HM3D_TEST_SCENES
 
+# OVON Dataset Scenes (from Habitat-OVON dataset)
+# Located in data/datasets/ovon/hm3d/{val_seen,val_unseen}/content/
+OVON_VAL_SEEN_SCENES = [
+    "4ok3usBNeis", "5cdEh9F2hJL", "6s7QHgap2fW", "7MXmsvcQjpJ",
+    "a8BtkwhxdRV", "BAbdmeyTvMZ", "bCPU9suPUw9", "bxsVRursffK",
+    "CrMo8WxCyVb", "cvZr5TUy5C5", "Dd4bFSTQ8gi", "DYehNKdT76V",
+    "eF36g7L6Z9M", "GLAQ4DNUx5U", "h1zeeAwLh9Z", "HY1NcmCgn3n",
+    "k1cupFYWXJ6", "LT9Jq6dN3Ea", "MHPLjHsuG27", "mL8ThkuaVTM",
+    "mv2HUxq3B53", "Nfvxx8J5NCo", "p53SfW6mjZe", "q3zU7Yy5E5s",
+    "q5QZSEeHe5g", "QaLdnwvtxbs", "qyAac8rV8Zk", "svBbv1Pavdk",
+    "TEEsavR23oF", "VBzV5z6i1WS", "wcojb4TFT35", "XB4GS9ShBRE",
+    "y9hTuugGdiq", "yr17PDCnDDW", "ziup5kvtCCR", "zt1RVoi7PcG",
+]
+
+OVON_VAL_UNSEEN_SCENES = [
+    # These scenes are from the val_unseen split (val_unseen_hard.json.gz)
+    # Same scene IDs as val_seen but with different (unseen) object categories
+    "4ok3usBNeis", "5cdEh9F2hJL", "6s7QHgap2fW", "7MXmsvcQjpJ",
+    "a8BtkwhxdRV", "BAbdmeyTvMZ", "bCPU9suPUw9", "bxsVRursffK",
+    "CrMo8WxCyVb", "cvZr5TUy5C5", "Dd4bFSTQ8gi", "DYehNKdT76V",
+    "eF36g7L6Z9M", "GLAQ4DNUx5U", "h1zeeAwLh9Z", "HY1NcmCgn3n",
+    "k1cupFYWXJ6", "LT9Jq6dN3Ea", "MHPLjHsuG27", "mL8ThkuaVTM",
+    "mv2HUxq3B53", "Nfvxx8J5NCo", "p53SfW6mjZe", "q3zU7Yy5E5s",
+    "q5QZSEeHe5g", "QaLdnwvtxbs", "qyAac8rV8Zk", "svBbv1Pavdk",
+    "TEEsavR23oF", "VBzV5z6i1WS", "wcojb4TFT35", "XB4GS9ShBRE",
+    "y9hTuugGdiq", "yr17PDCnDDW", "ziup5kvtCCR", "zt1RVoi7PcG",
+]
+
 
 def get_scenes_for_dataset(dataset: str = "hm3d", split: str = "train") -> List[str]:
     """
     Get scene IDs for a specific dataset and split.
     
     Args:
-        dataset: Dataset name ("hm3d", "mp3d")
-        split: Split name ("train", "test", "val")
+        dataset: Dataset name ("hm3d", "mp3d", "ovon")
+        split: Split name ("train", "test", "val", "val_seen", "val_unseen")
         
     Returns:
         List of scene IDs
@@ -131,6 +159,12 @@ def get_scenes_for_dataset(dataset: str = "hm3d", split: str = "train") -> List[
             "train": MP3D_TRAINING_SCENES,
             "test": MP3D_TEST_SCENES,
             "val": MP3D_TEST_SCENES,
+        },
+        "ovon": {
+            "val_seen": OVON_VAL_SEEN_SCENES,
+            "val_unseen": OVON_VAL_UNSEEN_SCENES,
+            "train": [],  # OVON doesn't use custom train scenes
+            "val": OVON_VAL_SEEN_SCENES,  # Default val to val_seen
         }
     }
     
@@ -141,6 +175,19 @@ def get_scenes_for_dataset(dataset: str = "hm3d", split: str = "train") -> List[
         raise ValueError(f"Unknown split: {split}. Available: {list(scene_map[dataset].keys())}")
     
     return scene_map[dataset][split]
+
+
+def get_ovon_episodes_path(split: str = "val_seen") -> str:
+    """
+    Get the path to OVON episodes directory.
+    
+    Args:
+        split: Split name ("val_seen", "val_unseen")
+        
+    Returns:
+        Path to the episodes content directory
+    """
+    return f"data/datasets/ovon/hm3d/{split}/content"
 
 
 # Room type categories (for classification)

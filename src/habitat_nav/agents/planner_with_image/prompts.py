@@ -27,7 +27,7 @@ Reasoning: Why this specific action is the best choice based on what you see.
 Command: function_name(argument)
 
 Important rules:
-- If you see the target object in the images, call goto(target) to get close to it.
+- If you see the target object in the visible objects list, immediately call stop(). You do not need to navigate to it or interact with it.
 - Use visual cues from images to identify rooms and objects.
 - Learn from failed actions - don't repeat the same failing action.
 - When stuck, try opening doors to discover new rooms.
@@ -79,7 +79,7 @@ ACTION_HISTORY_HEADER = "Recent actions (newest first):"
 # =============================================================================
 
 GUIDANCE_TARGET_FOUND = """🎯 TARGET FOUND! The target "{target}" is in the visible objects list.
-→ Look at the images to locate it visually, then call goto({target}) to get close."""
+→ Immediately call stop() to complete the task. You do not need to navigate to it or interact with it."""
 
 GUIDANCE_REPEATED_FAILURES = """⚠️ Recent actions have been failing repeatedly.
 → Look at the images carefully - you may be stuck or facing a wall.

@@ -127,6 +127,8 @@ class ActionExecutor:
         Snaps to navmesh for valid positioning.
         Also captures a frame for video recording.
         
+        IMPORTANT: Updates the environment's distance_travelled for proper SPL calculation.
+        
         Args:
             position_2d: 2D position (x, z)
             yaw: Yaw angle in radians
@@ -171,10 +173,18 @@ class ActionExecutor:
             # This ensures smooth navigation is visible in recorded videos
             self._capture_frame_after_teleport()
             
-            # Verify movement
+            # Verify movement and update distance_travelled for SPL calculation
             new_pos, _ = self.env.simulator.get_agent_state()
-            movement = np.linalg.norm(np.array([new_pos[0], new_pos[2]]) - 
-                                     np.array([old_pos[0], old_pos[2]]))
+            movement = np.linalg.norm(new_pos - old_pos)
+            
+            # Update the environment's episode_info.distance_travelled
+            # This is critical for correct SPL calculation with high-level actions
+            if hasattr(self.env, 'episode_info') and self.env.episode_info is not None:
+                self.env.episode_info.distance_travelled += movement
+            
+            # Also update the environment's _previous_position for consistency
+            if hasattr(self.env, '_previous_position'):
+                self.env._previous_position = new_pos.copy()
             
             return movement > 0.01
             
